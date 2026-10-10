@@ -211,7 +211,32 @@ body{padding-bottom:calc(82px + env(safe-area-inset-bottom,0px))}
 .sub-menu b{font-size:18px}.sub-menu small{font-size:13px;color:#64748b;line-height:1.4}
 @media(max-width:620px){.sub-menu{grid-template-columns:1fr}.sub-menu button{min-height:90px;padding:16px;font-size:23px;gap:5px}.navbtn{font-size:9px}.navbtn .nicon{font-size:19px}}
 </style>
-</head>
+<style>
+/* Motstandere: styles isolated from the rest of the app */
+#motstandere .scout-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:16px 0}
+#motstandere .scout-tab{background:#e8eef5;border:1px solid #cbd9e7;border-radius:12px;padding:12px 4px;color:#173b67;font-weight:800;cursor:pointer;font-size:clamp(10px,2.8vw,14px)}
+#motstandere .scout-tab.active{background:#173b67;color:white}
+#motstandere .scout-country{background:#0f1d2e;color:#f4f7fb;border-radius:20px;overflow:hidden;margin:14px 0;border:1px solid #263b55}
+#motstandere .scout-country[hidden]{display:none}
+#motstandere .country-head{padding:18px;background:linear-gradient(135deg,#13243a,#0f1d2e)}
+#motstandere .country-head h2{margin:0;font-size:24px;color:#fff}
+#motstandere .country-head p{color:#a9b7c8;line-height:1.5}
+#motstandere .badge{display:inline-block;padding:6px 9px;border-radius:30px;background:#14283f;font-size:12px}
+#motstandere .badge.ok{color:#9df0d3}#motstandere .badge.warn{color:#ffe49b}
+#motstandere .section{padding:16px 18px;border-top:1px solid #263b55}
+#motstandere .section h3{margin:0 0 12px;color:#fff}
+#motstandere .grid,#motstandere .videos,#motstandere .focus{display:grid;grid-template-columns:1fr;gap:9px}
+#motstandere .player{display:flex;justify-content:space-between;align-items:center;gap:9px;padding:11px;background:#0b1726;border:1px solid #1e334c;border-radius:12px}
+#motstandere .player strong{display:block;color:#fff}#motstandere .player small,#motstandere .note{color:#a9b7c8}
+#motstandere .stat{font-weight:800;color:#dfeaf7;white-space:nowrap}
+#motstandere .video{display:block;text-decoration:none;padding:14px;border-radius:14px;background:#14283f;border:1px solid #2a4260;color:#fff}
+#motstandere .video .top{display:flex;justify-content:space-between;gap:8px}
+#motstandere .video .title{font-weight:850}#motstandere .video .tag{font-size:11px;background:#101f31;border-radius:30px;padding:4px 7px;white-space:nowrap}
+#motstandere .video p{color:#a9b7c8;font-size:13px;line-height:1.5}#motstandere .watch,#motstandere .sources a{color:#aee8ff}
+#motstandere .focus{list-style:none;padding:0;margin:0}#motstandere .focus li{padding:11px;border-left:3px solid #5bc0eb;background:#0b1726;border-radius:8px}
+#motstandere .sources a{display:block;margin:8px 0;overflow-wrap:anywhere}
+@media(min-width:700px){#motstandere .grid,#motstandere .videos,#motstandere .focus{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style></head>
 <body>
 <section class="app-section active" id="home">
 <div class="hero">
@@ -360,8 +385,255 @@ body{padding-bottom:calc(82px + env(safe-area-inset-bottom,0px))}
 </div>
 </section>
 <section class="app-section" id="nevza">
-<div class="wrap"><div class="section-head"><div><div class="eyebrow">Finland · 23.–25. oktober</div><h2>NEVZA U20</h2></div><p>Velg informasjon om kvalifiseringen, kampene eller kamp-protokollen.</p></div><div class="sub-menu"><button data-page="emvei">🏆<b>Veien til EM</b><small>Dette spiller vi om</small></button><button data-page="nevzakamper">🏐<b>Kampoppsett</b><small>Alle kamper og arenaer</small></button><button data-page="protokoll">⏱️<b>Kamp-protokoll</b><small>Oppvarming og kampforberedelser</small></button></div></div>
-</section><section class="app-section" id="protokoll"><div class="wrap"><div class="section-head"><div><div class="eyebrow">NEVZA · Rovaniemi</div><h2>Kamp-protokoll</h2></div><p>Spilleprotokoll og laglederens sjekkliste</p></div><div class="card" id="kampprotokoll" style="padding:22px;margin-top:18px;scroll-margin-top:18px">
+<div class="wrap"><div class="section-head"><div><div class="eyebrow">Finland · 23.–25. oktober</div><h2>NEVZA U20</h2></div><p>Velg informasjon om kvalifiseringen, kampene eller kamp-protokollen.</p></div><div class="sub-menu"><button data-page="emvei">🏆<b>Veien til EM</b><small>Dette spiller vi om</small></button><button data-page="nevzakamper">🏐<b>Kampoppsett</b><small>Alle kamper og arenaer</small></button><button data-page="protokoll">⏱️<b>Kamp-protokoll</b><small>Oppvarming og kampforberedelser</small></button><button data-page="motstandere">🔎<b>Motstandere</b><small>Tropp, video og scouting</small></button></div></div>
+</section><section class="app-section" id="motstandere"><div class="wrap"><div class="section-head"><div><div class="eyebrow">NEVZA · Motstanderanalyse</div><h2>Motstandere &amp; video</h2></div><p>Danmark, England, Finland og Sverige – tropper, videoer og scoutingpunkter.</p></div><div class="scout-tabs"><button class="scout-tab active" data-scout="denmark" type="button">🇩🇰 Danmark</button><button class="scout-tab" data-scout="england" type="button">🏴 England</button><button class="scout-tab" data-scout="finland" type="button">🇫🇮 Finland</button><button class="scout-tab" data-scout="sweden" type="button">🇸🇪 Sverige</button></div><section class="country scout-country" id="denmark">
+<div class="country-head">
+<h2>🇩🇰 Danmark U20</h2>
+<p>Endelig tropp offentliggjort av Volleyball Danmark. 12 spillere.</p>
+<span class="badge ok">✓ Endelig NEVZA-tropp</span>
+</div>
+<div class="section">
+<h3>Tropp</h3>
+<div class="grid">
+<div class="player"><div><strong>Rumle Steinov Thrane</strong><small>Libero</small></div><div class="stat">173 cm</div></div>
+<div class="player"><div><strong>Rumle Nordentoft</strong><small>Midt</small></div><div class="stat">—</div></div>
+<div class="player"><div><strong>Anders Jakob Mellmølle</strong><small>Kant</small></div><div class="stat">170 cm</div></div>
+<div class="player"><div><strong>Sander Viler Junge</strong><small>Kant</small></div><div class="stat">182 cm</div></div>
+<div class="player"><div><strong>Balder Tølbøll Sørensen</strong><small>Opplegger</small></div><div class="stat">187 cm</div></div>
+<div class="player"><div><strong>Elias Højer Broge</strong><small>Kant</small></div><div class="stat">197 cm</div></div>
+<div class="player"><div><strong>Karl Lind-Holst</strong><small>Kant</small></div><div class="stat">190 cm</div></div>
+<div class="player"><div><strong>Boas Serup</strong><small>Midt</small></div><div class="stat">200 cm</div></div>
+<div class="player"><div><strong>Mikkel Sveigaard Holmsberg</strong><small>Midt</small></div><div class="stat">197 cm</div></div>
+<div class="player"><div><strong>Mathias Jørgensen</strong><small>Kant</small></div><div class="stat">—</div></div>
+<div class="player"><div><strong>Storm Lui Genet</strong><small>Kant</small></div><div class="stat">198 cm</div></div>
+<div class="player"><div><strong>Hirdaya Gurung</strong><small>Opplegger</small></div><div class="stat">177 cm</div></div>
+</div>
+</div>
+<div class="section">
+<h3>Video</h3>
+<div class="videos">
+<a class="video" href="https://www.youtube.com/watch?v=NyHFVeVBRWQ" rel="noopener" target="_blank">
+<div class="top"><div class="title">Danmark – England</div><span class="tag">NEVZA 2025</span></div>
+<p>Ekstra interessant fordi begge lag er motstandere i Rovaniemi. Bruk kampen til å se struktur, serve/mottak og spillere som går igjen.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+</div>
+</div>
+<div class="section">
+<h3>Hva bør vi se etter?</h3>
+<ul class="focus">
+<li>Hvem av Brøge og Genet får mest høyball?</li>
+<li>Hvem starter som opplegger – Balder eller Gurung?</li>
+<li>Mottaksansvar og hvem vi kan serverette mot.</li>
+<li>Midtbruk med Serup/Holmsberg ved godt mottak.</li>
+</ul>
+</div>
+<div class="section sources">
+<h3>Kilde</h3>
+<a href="https://volleyball.dk/trup-u20-herrer-em-kval/" rel="noopener" target="_blank">Volleyball Danmark – U20 herrer EM-kval</a>
+</div>
+</section><section class="country scout-country" hidden="" id="england">
+<div class="country-head">
+<h2>🏴 England U20</h2>
+<p>Volleyball England offentliggjorde 14 spillere til U20 NEVZA 18. september.</p>
+<span class="badge ok">✓ Endelig NEVZA-tropp</span>
+</div>
+<div class="section">
+<h3>Tropp</h3>
+<div class="grid">
+<div class="player"><div><strong>Alexandre Fourtou-Farrant</strong><small>Richmond</small></div></div>
+<div class="player"><div><strong>Ben Green</strong><small>Southampton</small></div></div>
+<div class="player"><div><strong>Emmanuel Oretoye</strong><small>Leeds Gorse</small></div></div>
+<div class="player"><div><strong>Felix Summers</strong><small>Wessex</small></div></div>
+<div class="player"><div><strong>James Cox</strong><small>Newcastle Staffs • Opplegger</small></div></div>
+<div class="player"><div><strong>Jamie Fraser</strong><small>Mountain View, USA</small></div></div>
+<div class="player"><div><strong>Jasper Paulini-Torrance</strong><small>Oxford</small></div></div>
+<div class="player"><div><strong>Jelani Conteh</strong><small>Richmond</small></div></div>
+<div class="player"><div><strong>Josh Cosgrove</strong><small>Leeds Gorse</small></div></div>
+<div class="player"><div><strong>Kairon Tait-Millward</strong><small>Urmston</small></div></div>
+<div class="player"><div><strong>Maks Makowski</strong><small>Leeds Gorse</small></div></div>
+<div class="player"><div><strong>Oliver Beek</strong><small>Exeter Storm</small></div></div>
+<div class="player"><div><strong>Oliver Harrison</strong><small>Richmond</small></div></div>
+<div class="player"><div><strong>Ryan Wartnaby</strong><small>Richmond</small></div></div>
+</div>
+</div>
+<div class="section">
+<h3>Video</h3>
+<div class="videos">
+<a class="video" href="https://www.youtube.com/watch?v=NyHFVeVBRWQ" rel="noopener" target="_blank">
+<div class="top"><div class="title">Danmark – England</div><span class="tag">NEVZA 2025</span></div>
+<p>Beste hele kamp vi har funnet med England mot en annen av våre NEVZA-motstandere.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+<a class="video" href="https://www.youtube.com/watch?v=kmyME20jUdw" rel="noopener" target="_blank">
+<div class="top"><div class="title">England – skill tape</div><span class="tag">Individuelt</span></div>
+<p>Relevant oppleggermateriale. Bruk først og fremst til å se teknikk, tempo og preferanser – ikke som full kampanalyse.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+</div>
+</div>
+<div class="section">
+<h3>Hva bør vi se etter?</h3>
+<ul class="focus">
+<li>James Cox: angrepsfordeling ved perfekt vs. dårlig mottak.</li>
+<li>Hvem får den høye ballen når England er ute av system?</li>
+<li>Hvilke kanter tar mest mottak?</li>
+<li>Servepress og hvor mye de bruker midt i sideout.</li>
+</ul>
+</div>
+<div class="section sources">
+<h3>Kilde</h3>
+<a href="https://www.volleyballengland.org/article/2095/englands-u20-nevza-2026-squad-selections-confirmed%C2%A0" rel="noopener" target="_blank">Volleyball England – U20 NEVZA 2026 squad</a>
+</div>
+</section><section class="country scout-country" hidden="" id="finland">
+<div class="country-head">
+<h2>🇫🇮 Finland U20</h2>
+<p>Endelig tropp publisert 1. oktober. Finland har seks 2008-spillere og flere svært unge spillere fra U18-miljøet.</p>
+<span class="badge ok">✓ Endelig NEVZA-tropp</span>
+</div>
+<div class="section">
+<h3>Tropp</h3>
+<div class="grid">
+<div class="player"><div><strong>Justus Välimäki</strong><small>Opplegger</small></div><div class="stat">2009</div></div>
+<div class="player"><div><strong>Eeli Kuukasjärvi</strong><small>Opplegger</small></div><div class="stat">2008</div></div>
+<div class="player"><div><strong>Maxim Sadovnikov</strong><small>Midt</small></div><div class="stat">2009</div></div>
+<div class="player"><div><strong>Toni Falck</strong><small>Midt</small></div><div class="stat">2008</div></div>
+<div class="player"><div><strong>Riku Kaaretkoski</strong><small>Midt</small></div><div class="stat">2008</div></div>
+<div class="player"><div><strong>Kaapo Vanhatupa</strong><small>Kant</small></div><div class="stat">2008</div></div>
+<div class="player"><div><strong>Konsta Viljamaa</strong><small>Kant / diagonal</small></div><div class="stat">2008</div></div>
+<div class="player"><div><strong>Rändi Kivine</strong><small>Kant</small></div><div class="stat">2009</div></div>
+<div class="player"><div><strong>Leo Nykänen</strong><small>Kant</small></div><div class="stat">2009</div></div>
+<div class="player"><div><strong>Ossi Lehtiö</strong><small>Kant</small></div><div class="stat">2008</div></div>
+<div class="player"><div><strong>Elias Oivanen</strong><small>Kant</small></div><div class="stat">2009</div></div>
+<div class="player"><div><strong>Miikka Väisänen</strong><small>Diagonal</small></div><div class="stat">2010</div></div>
+<div class="player"><div><strong>Mico Tuomi</strong><small>Libero</small></div><div class="stat">2010</div></div>
+<div class="player"><div><strong>Eemi Marttila</strong><small>Libero</small></div><div class="stat">2009</div></div>
+</div>
+</div>
+<div class="section">
+<h3>Video – 2008-kjernen</h3>
+<div class="videos">
+<a class="video" href="https://www.youtube.com/watch?v=jGe9XX8dP3o" rel="noopener" target="_blank">
+<div class="top"><div class="title">Brasil – Finland</div><span class="tag">U19-VM 2025</span></div>
+<p>Relevant for blant andre Eeli Kuukasjärvi og Kaapo Vanhatupa. God kamp for å se Finland mot fysisk sterk motstand.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+<a class="video" href="https://www.youtube.com/watch?v=v7ISMlyri9Y" rel="noopener" target="_blank">
+<div class="top"><div class="title">Cuba – Finland</div><span class="tag">U19-VM 2025</span></div>
+<p>Mer materiale på den eldre finske kjernen og oppleggerspillet rundt Kuukasjärvi.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+</div>
+</div>
+<div class="section">
+<h3>Video – 2009/2010-kjernen</h3>
+<div class="videos">
+<a class="video" href="https://www.youtube.com/watch?v=sak5sgUNDkc" rel="noopener" target="_blank">
+<div class="top"><div class="title">Finland – Türkiye</div><span class="tag">U18-EM 2026</span></div>
+<p>Full kamp fra juli 2026. Relevant for den yngre kjernen som også er tatt ut til U20.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+<a class="video" href="https://www.youtube.com/watch?v=_5iwlZGF4PY" rel="noopener" target="_blank">
+<div class="top"><div class="title">Finland – Slovenia</div><span class="tag">U18-EM 2026</span></div>
+<p>Full kamp fra CEVs offisielle kanal. Ferskt materiale på den yngre finske gruppen.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+</div>
+</div>
+<div class="section">
+<h3>Hva bør vi se etter?</h3>
+<ul class="focus">
+<li>Kuukasjärvi: hvor raskt han spiller ved godt mottak.</li>
+<li>Vanhatupa/Lehtiö/Viljamaa: hvem tar størst høyballansvar?</li>
+<li>Forskjellen mellom 2008-kjernen og U18-spillerne.</li>
+<li>Hvor aggressivt Finland server og hvor stabilt de er i mottak.</li>
+</ul>
+</div>
+<div class="section sources">
+<h3>Kilder</h3>
+<a href="https://www.lentopallo.fi/uutiset/u20-poikien-maajoukkue-em-karisntojen-viimeistelyleirille-valittu/" rel="noopener" target="_blank">Finlands Volleyballforbund – endelig U20-tropp</a>
+<a href="https://www.lentopallo.fi/maajoukkueet/pojat/murikat-u20-pojat/" rel="noopener" target="_blank">Finland U20 – lagsside</a>
+</div>
+</section><section class="country scout-country" hidden="" id="sweden">
+<div class="country-head">
+<h2>🇸🇪 Sverige U19/U20</h2>
+<p>Svensk Volleyboll publiserte 5. oktober en bruttotropp på 20 spillere. 14 skal tas ut til selve turneringen i Rovaniemi.</p>
+<span class="badge warn">⚠ Bruttotropp – 14 tas ut</span>
+</div>
+<div class="section">
+<h3>Bruttotropp</h3>
+<div class="grid">
+<div class="player"><div><strong>Ludvig Asplund</strong><small>Sollentuna VK</small></div></div>
+<div class="player"><div><strong>Felix Björkholtz</strong><small>Sollentuna VK</small></div></div>
+<div class="player"><div><strong>Oscar Enlund</strong><small>Floby VK</small></div></div>
+<div class="player"><div><strong>Alfred Fransson</strong><small>Örkelljunga VK</small></div></div>
+<div class="player"><div><strong>Natanel Fredin</strong><small>Habo Wolley</small></div></div>
+<div class="player"><div><strong>Arvid Hillgren</strong><small>IF Stöcke</small></div></div>
+<div class="player"><div><strong>Linus Holmberg</strong><small>Habo Wolley</small></div></div>
+<div class="player"><div><strong>Hannes Holmberg</strong><small>Habo Wolley</small></div></div>
+<div class="player"><div><strong>Viktor Jedrycha</strong><small>Örkelljunga VK</small></div></div>
+<div class="player"><div><strong>Elvin Lindkvist</strong><small>Uppsala VS</small></div></div>
+<div class="player"><div><strong>Marko Matic</strong><small>Sollentuna VK</small></div></div>
+<div class="player"><div><strong>Wim Nordin</strong><small>Södermalms VBK</small></div></div>
+<div class="player"><div><strong>Nils Peeker</strong><small>Lunds VK</small></div></div>
+<div class="player"><div><strong>Kacper Piotrowski</strong><small>Floby VK</small></div></div>
+<div class="player"><div><strong>Linus Rising</strong><small>Uppsala VS</small></div></div>
+<div class="player"><div><strong>Malte Rytter Joabsson</strong><small>Lunds VK</small></div></div>
+<div class="player"><div><strong>Ville Sandberg</strong><small>Örkelljunga VK</small></div></div>
+<div class="player"><div><strong>Oskar Törner</strong><small>Uppsala VK</small></div></div>
+<div class="player"><div><strong>Edwin Vidhav</strong><small>Habo Wolley</small></div></div>
+<div class="player"><div><strong>Lage Zethson</strong><small>Habo Wolley</small></div></div>
+</div>
+<p class="note">NB: Dette er den offisielle bruttotroppen per 5. oktober. Siden oppdateres når Sverige publiserer de endelige 14.</p>
+</div>
+<div class="section">
+<h3>Video – U18 EM-kval 2026</h3>
+<div class="videos">
+<a class="video" href="https://www.youtube.com/watch?v=5PzH7756Y2M" rel="noopener" target="_blank">
+<div class="top"><div class="title">Portugal – Sverige</div><span class="tag">U18 EM-kval</span></div>
+<p>Fem-settskamp og derfor et godt grunnlag for å se mange rotasjoner og hvordan Sverige løser pressede situasjoner.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+<a class="video" href="https://www.youtube.com/watch?v=vpESsDS_rlg" rel="noopener" target="_blank">
+<div class="top"><div class="title">Tyskland – Sverige</div><span class="tag">U18 EM-kval</span></div>
+<p>Relevant for å se svensk sideout og blokk/forsvar mot fysisk sterk motstand.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+<a class="video" href="https://www.youtube.com/watch?v=e-7zu5ce1pE" rel="noopener" target="_blank">
+<div class="top"><div class="title">Sverige – Türkiye</div><span class="tag">U18 EM-kval</span></div>
+<p>Ferskt materiale på flere spillere som nå er i U19/U20-bruttotroppen.</p>
+<span class="watch">▶ Se på YouTube</span>
+</a>
+</div>
+</div>
+<div class="section">
+<h3>Hva bør vi se etter?</h3>
+<ul class="focus">
+<li>Hvilke U18-spillere får roller også i den endelige U19/U20-troppen?</li>
+<li>Linus Holmberg / Kacper Piotrowski: midtbruk og blokk.</li>
+<li>Oskar Törner og Lage Zethson: hvem får oppleggerrollen?</li>
+<li>Hvilke spillere tar størst mottaksansvar under servepress?</li>
+</ul>
+</div>
+<div class="section sources">
+<h3>Kilder</h3>
+<a href="https://volleyboll.se/volleyboll/nyheter/landslag-volleyboll/2026-10-05-har-ar-ungdomslandslagens-trupper-infor-nevza-turneringarna" rel="noopener" target="_blank">Svensk Volleyboll – bruttotropp til NEVZA</a>
+<a href="https://volleyboll.se/volleyboll/landslag/ungdom" rel="noopener" target="_blank">Svensk Volleyboll – ungdomslandslag</a>
+</div>
+</section><section class="country scout-country scout-common">
+<div class="country-head">
+<h2>🎯 Felles oppgave før turneringen</h2>
+<p>Ikke prøv å huske alt. Se én kamp eller deler av én kamp og noter 2–3 ting du mener kan hjelpe Norge.</p>
+</div>
+<div class="section">
+<ul class="focus">
+<li><strong>Serve:</strong> Hvem bør vi serve på – og hvorfor?</li>
+<li><strong>Mottak:</strong> Hvem tar mye bane, og hvem blir skjermet?</li>
+<li><strong>Angrep:</strong> Hvem får ballen når laget er under press?</li>
+<li><strong>Blokk:</strong> Hvem/hvilken rotasjon ser mest sårbar ut?</li>
+</ul>
+</div>
+</section></div></section><section class="app-section" id="protokoll"><div class="wrap"><div class="section-head"><div><div class="eyebrow">NEVZA · Rovaniemi</div><h2>Kamp-protokoll</h2></div><p>Spilleprotokoll og laglederens sjekkliste</p></div><div class="card" id="kampprotokoll" style="padding:22px;margin-top:18px;scroll-margin-top:18px">
 <div class="eyebrow">Bulletin 2 · 8. oktober 2026</div><h3 style="font-size:25px;margin:6px 0 8px;color:var(--navy)">⏱️ Kampprotokoll</h3>
 <p style="color:#617185;line-height:1.55">Tidene er relative til kampstart. Ved forsinket foregående kamp oppgir arrangøren 32 minutter samlet forberedelsestid.</p>
 <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:320px;text-align:left"><thead><tr><th style="padding:11px;border-bottom:2px solid #dce5ed">Før start</th><th style="padding:11px;border-bottom:2px solid #dce5ed">Aktivitet</th></tr></thead><tbody>
@@ -470,7 +742,7 @@ const sections = [...document.querySelectorAll('.app-section')];
 const navBtns = [...document.querySelectorAll('.navbtn')];
 function showPage(id, updateHash=true){
  sections.forEach(s => s.classList.toggle('active', s.id === id));
- navBtns.forEach(b => b.classList.toggle('active', b.dataset.page === (['emvei','nevzakamper','protokoll'].includes(id) ? 'nevza' : ['kamper'].includes(id) ? 'precamp' : id)));
+ navBtns.forEach(b => b.classList.toggle('active', b.dataset.page === (['emvei','nevzakamper','protokoll','motstandere'].includes(id) ? 'nevza' : ['kamper'].includes(id) ? 'precamp' : id)));
  window.scrollTo({top:0,behavior:'instant'});
  if(updateHash) history.replaceState(null,'','#'+id);
 }
@@ -480,5 +752,11 @@ document.querySelectorAll('[data-page]').forEach(el => {
 const initial = location.hash.replace('#','');
 if(initial && document.getElementById(initial)) showPage(initial,false);
 </script>
-</body>
+<script>
+document.querySelectorAll('[data-scout]').forEach(button => button.addEventListener('click', () => {
+ const target=button.dataset.scout;
+ document.querySelectorAll('#motstandere .scout-tab').forEach(b=>b.classList.toggle('active',b===button));
+ document.querySelectorAll('#motstandere .scout-country[id]').forEach(el=>{el.hidden=el.id!==target});
+}));
+</script></body>
 </html>
