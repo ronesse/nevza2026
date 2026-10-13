@@ -6,486 +6,50 @@
 </style></head><body><main class="container">
 <h1>PowerShell – XLS til API</h1><p>Hele skriptet ligger i tekstfeltet. Kopier det direkte til serveren. Du kan også laste ned en <code>.ps1</code>-fil.</p>
 <div class="actions"><button id="copy">📋 Kopier hele skriptet</button><button class="secondary" id="select">Marker alt</button><button class="secondary" id="download">Last ned .ps1</button></div>
-<textarea id="script" spellcheck="false" wrap="off" aria-label="PowerShell-skript">param(
-    [string]$ConfigFile = "$PSScriptRoot\config.json",
-
-    [switch]$ReplaceXls,
-    [switch]$ReplaceTxt
-)
-
-$ErrorActionPreference = "Stop"
-
-
-# =====================================================================
-# CONFIG
-# =====================================================================
-
-if (-not (Test-Path $ConfigFile)) {
-    throw "Finner ikke config-fil: $ConfigFile"
-}
-
-$config = Get-Content `
-    -Path $ConfigFile `
-    -Raw |
-    ConvertFrom-Json
-
-
-$basePath = $PSScriptRoot
-
-$csvPath = Join-Path $basePath $config.Files.CsvPath
-
-
-# =====================================================================
-# SQL CONFIG
-# =====================================================================
-
-$sqlServer   = $config.Database.Server
-$sqlDatabase = $config.Database.Database
-$sqlTable    = $config.Database.Table
-
-$integratedSecurity = [bool]$config.Database.IntegratedSecurity
-$sqlUsername        = [string]$config.Database.Username
-$sqlPassword        = [string]$config.Database.Password
-
-
-# =====================================================================
-# KONTROLLER CSV
-# =====================================================================
-
-Write-Host ""
-Write-Host "============================================================"
-Write-Host "TEST SQL IMPORT"
-Write-Host "============================================================"
-Write-Host "CSV:      $csvPath"
-Write-Host "Server:   $sqlServer"
-Write-Host "Database: $sqlDatabase"
-Write-Host "Table:    $sqlTable"
-Write-Host "============================================================"
-
-
-if (-not (Test-Path $csvPath)) {
-    throw "Finner ikke CSV-fil: $csvPath"
-}
-
-
-# =====================================================================
-# LES CSV
-# =====================================================================
-
-$jobs = @(Import-Csv -Path $csvPath)
-
-
-Write-Host ""
-Write-Host "Antall rader i CSV: $($jobs.Count)"
-
-
-if ($jobs.Count -eq 0) {
-    throw "CSV-filen inneholder ingen rader."
-}
-
-
-# =====================================================================
-# BESTEM HVA SOM SKAL ERSTATTES
-# =====================================================================
-
-if (-not $ReplaceXls -and -not $ReplaceTxt) {
-
-    Write-Host ""
-    Write-Host "Ingen source valgt eksplisitt."
-    Write-Host "Finner source fra CSV..."
-
-    $sources = @(
-        $jobs |
-        Select-Object -ExpandProperty Source -Unique
-    )
-
-    if ($sources -contains "XLS") {
-        $ReplaceXls = $true
-    }
-
-    if ($sources -contains "TXT") {
-        $ReplaceTxt = $true
-    }
-}
-
-
-Write-Host ""
-Write-Host "Replace XLS: $ReplaceXls"
-Write-Host "Replace TXT: $ReplaceTxt"
-
-
-if (-not $ReplaceXls -and -not $ReplaceTxt) {
-    throw "Fant verken XLS eller TXT som Source i CSV."
-}
-
-
-# =====================================================================
-# CONNECTION STRING
-# =====================================================================
-
-if ($integratedSecurity) {
-
-    $connectionString =
-        "Server=$sqlServer;" +
-        "Database=$sqlDatabase;" +
-        "Integrated Security=True;" +
-        "TrustServerCertificate=True;"
-
-}
-else {
-
-    $connectionString =
-        "Server=$sqlServer;" +
-        "Database=$sqlDatabase;" +
-        "User ID=$sqlUsername;" +
-        "Password=$sqlPassword;" +
-        "TrustServerCertificate=True;"
-}
-
-
-# =====================================================================
-# BYGG DATATABLE
-# =====================================================================
-
-$dataTable = New-Object System.Data.DataTable
-
-
-[void]$dataTable.Columns.Add(
-    "Id",
-    [Int64]
-)
-
-[void]$dataTable.Columns.Add(
-    "Name",
-    [string]
-)
-
-[void]$dataTable.Columns.Add(
-    "Pfield1Id",
-    [string]
-)
-
-[void]$dataTable.Columns.Add(
-    "Pfield1Name",
-    [string]
-)
-
-[void]$dataTable.Columns.Add(
-    "Disabled",
-    [bool]
-)
-
-[void]$dataTable.Columns.Add(
-    "Source",
-    [string]
-)
-
-
-foreach ($job in $jobs) {
-
-    $row = $dataTable.NewRow()
-
-    try {
-        $row["Id"] = [Int64]$job.Id
-    }
-    catch {
-        throw "Kunne ikke konvertere Id '$($job.Id)' til Int64."
-    }
-
-    $row["Name"]        = [string]$job.Name
-    $row["Pfield1Id"]   = [string]$job.Pfield1Id
-    $row["Pfield1Name"] = [string]$job.Pfield1Name
-
-    if (
-        [string]$job.Disabled -eq "True" -or
-        [string]$job.Disabled -eq "true" -or
-        [string]$job.Disabled -eq "1"
-    ) {
-        $row["Disabled"] = $true
-    }
-    else {
-        $row["Disabled"] = $false
-    }
-
-    $row["Source"] = [string]$job.Source
-
-    [void]$dataTable.Rows.Add($row)
-}
-
-
-Write-Host ""
-Write-Host "DataTable bygget."
-Write-Host "Antall rader: $($dataTable.Rows.Count)"
-
-
-# =====================================================================
-# SQL
-# =====================================================================
-
-$connection  = New-Object System.Data.SqlClient.SqlConnection
-$transaction = $null
-$bulkCopy    = $null
-
+<textarea id="script" spellcheck="false" wrap="off" aria-label="PowerShell-skript">
+$connectionString = `
+    "Server=$server;" +
+    "Database=$database;" +
+    "User ID=$username;" +
+    "Password=$password;" +
+    "TrustServerCertificate=True;" +
+    "Connection Timeout=10;"
+
+$connection = New-Object System.Data.SqlClient.SqlConnection
+$connection.ConnectionString = $connectionString
 
 try {
 
-    $connection.ConnectionString = $connectionString
-
-
-    Write-Host ""
-    Write-Host "Åpner SQL connection..."
+    Write-Host "Tester SQL..."
+    Write-Host "Server:   $server"
+    Write-Host "Database: $database"
+    Write-Host "Username: $username"
 
     $connection.Open()
 
-    Write-Host "SQL connection OK."
-
-
-    # =================================================================
-    # START TRANSACTION
-    # =================================================================
-
-    $transaction = $connection.BeginTransaction()
-
-
     Write-Host ""
-    Write-Host "Transaction startet."
-
-
-    # =================================================================
-    # DELETE XLS
-    # =================================================================
-
-    if ($ReplaceXls) {
-
-        Write-Host ""
-        Write-Host "Sletter eksisterende XLS-rader..."
-
-        $deleteXls = $connection.CreateCommand()
-
-        $deleteXls.Transaction = $transaction
-
-        $deleteXls.CommandText = @"
-DELETE FROM $sqlTable
-WHERE Source = 'XLS'
-"@
-
-        $deletedXls = $deleteXls.ExecuteNonQuery()
-
-        Write-Host "Slettet XLS-rader: $deletedXls"
-    }
-
-
-    # =================================================================
-    # DELETE TXT
-    # =================================================================
-
-    if ($ReplaceTxt) {
-
-        Write-Host ""
-        Write-Host "Sletter eksisterende TXT-rader..."
-
-        $deleteTxt = $connection.CreateCommand()
-
-        $deleteTxt.Transaction = $transaction
-
-        $deleteTxt.CommandText = @"
-DELETE FROM $sqlTable
-WHERE Source = 'TXT'
-"@
-
-        $deletedTxt = $deleteTxt.ExecuteNonQuery()
-
-        Write-Host "Slettet TXT-rader: $deletedTxt"
-    }
-
-
-    # =================================================================
-    # FILTRER DATATABLE
-    # =================================================================
-
-    $importTable = $dataTable.Clone()
-
-
-    foreach ($row in $dataTable.Rows) {
-
-        $source = [string]$row["Source"]
-
-        if (
-            ($source -eq "XLS" -and $ReplaceXls) -or
-            ($source -eq "TXT" -and $ReplaceTxt)
-        ) {
-
-            $importTable.ImportRow($row)
-        }
-    }
-
-
-    Write-Host ""
-    Write-Host "Rader som skal importeres: $($importTable.Rows.Count)"
-
-
-    # =================================================================
-    # BULK COPY
-    # =================================================================
-
-    if ($importTable.Rows.Count -gt 0) {
-
-        Write-Host ""
-        Write-Host "Starter SqlBulkCopy..."
-
-
-        $bulkCopy = New-Object `
-            System.Data.SqlClient.SqlBulkCopy(
-                $connection,
-                [System.Data.SqlClient.SqlBulkCopyOptions]::Default,
-                $transaction
-            )
-
-
-        $bulkCopy.DestinationTableName = $sqlTable
-
-        $bulkCopy.BatchSize = 1000
-
-        $bulkCopy.BulkCopyTimeout = 300
-
-
-        [void]$bulkCopy.ColumnMappings.Add(
-            "Id",
-            "Id"
-        )
-
-        [void]$bulkCopy.ColumnMappings.Add(
-            "Name",
-            "Name"
-        )
-
-        [void]$bulkCopy.ColumnMappings.Add(
-            "Pfield1Id",
-            "Pfield1Id"
-        )
-
-        [void]$bulkCopy.ColumnMappings.Add(
-            "Pfield1Name",
-            "Pfield1Name"
-        )
-
-        [void]$bulkCopy.ColumnMappings.Add(
-            "Disabled",
-            "Disabled"
-        )
-
-        [void]$bulkCopy.ColumnMappings.Add(
-            "Source",
-            "Source"
-        )
-
-
-        $bulkCopy.WriteToServer($importTable)
-
-
-        Write-Host "SqlBulkCopy OK."
-
-    }
-    else {
-
-        Write-Host ""
-        Write-Host "Ingen rader å bulk-inserte."
-        Write-Host "Delete vil fortsatt beholdes dersom transaction commits."
-    }
-
-
-    # =================================================================
-    # COMMIT
-    # =================================================================
-
-    $transaction.Commit()
-
-
-    Write-Host ""
-    Write-Host "============================================================"
-    Write-Host "SQL IMPORT OK"
-    Write-Host "============================================================"
-    Write-Host "Rader importert: $($importTable.Rows.Count)"
-    Write-Host "============================================================"
-
+    Write-Host "SQL CONNECTION OK"
+    Write-Host "ServerVersion: $($connection.ServerVersion)"
 }
 catch {
 
     Write-Host ""
-    Write-Host "============================================================"
-    Write-Host "SQL IMPORT FEILET"
-    Write-Host "============================================================"
-
+    Write-Host "SQL CONNECTION FEILET"
     Write-Host $_.Exception.Message
 
     Write-Host ""
     Write-Host "Base exception:"
     Write-Host $_.Exception.GetBaseException().Message
-
-
-    if ($transaction) {
-
-        try {
-
-            Write-Host ""
-            Write-Host "Ruller tilbake transaction..."
-
-            $transaction.Rollback()
-
-            Write-Host "Rollback OK."
-
-        }
-        catch {
-
-            Write-Host "Rollback feilet:"
-            Write-Host $_.Exception.Message
-        }
-    }
-
-
-    Write-Host "============================================================"
-
-    throw
 }
 finally {
 
-    if ($bulkCopy) {
-
-        try {
-            $bulkCopy.Close()
-            $bulkCopy.Dispose()
-        }
-        catch {}
+    if ($connection.State -ne "Closed") {
+        $connection.Close()
     }
 
-
-    if ($transaction) {
-
-        try {
-            $transaction.Dispose()
-        }
-        catch {}
-    }
-
-
-    if ($connection) {
-
-        try {
-
-            if (
-                $connection.State -ne
-                [System.Data.ConnectionState]::Closed
-            ) {
-
-                $connection.Close()
-            }
-
-            $connection.Dispose()
-
-        }
-        catch {}
-    }
+    $connection.Dispose()
 }
+    
 </textarea><div id="status" role="status" aria-live="polite"></div><small>Kopieringen bruker nettleserens utklippstavle. Hvis knappen ikke virker, bruk «Marker alt» og Ctrl+C.</small>
 </main><script>
 const field=document.getElementById('script');const status=document.getElementById('status');
