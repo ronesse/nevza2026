@@ -68,12 +68,102 @@ function Get-ApiHeaders {
 
 
 # =====================================================================
+# JOB ID KONVERTERING
+# =====================================================================
+
+function Convert-ToJobId {
+
+    param(
+        [Parameter(Mandatory)]
+        [string]$Pfield1No,
+
+        [switch]$RemoveDash
+    )
+
+    $map = @{
+        'I' = '3'
+        'P' = '4'
+        'S' = '5'
+        'Z' = '6'
+        'B' = '7'
+        'N' = '8'
+        'A' = '01'
+        'O' = '15'
+        'W' = '23'
+        'X' = '24'
+    }
+
+    $value = $Pfield1No.Trim().ToUpper()
+
+
+    # XLS:
+    # 8-00102-99-100
+    # ->
+    # 80010299100
+
+    if ($RemoveDash) {
+        $value = $value -replace "-", ""
+    }
+
+
+    # Spesialregel:
+    #
+    # LA0122P50113
+    # ->
+    # 4270122450113
+
+    if ($value.StartsWith("LA")) {
+        $value = "427" + $value.Substring(2)
+    }
+
+
+    $result = New-Object System.Text.StringBuilder
+
+
+    foreach ($char in $value.ToCharArray()) {
+
+        $c = $char.ToString()
+
+
+        if ($c -match '^\d$') {
+
+            [void]$result.Append($c)
+
+        }
+        elseif ($map.ContainsKey($c)) {
+
+            [void]$result.Append($map[$c])
+
+        }
+        else {
+
+            throw "Ukjent tegn '$c' i ID '$Pfield1No'."
+        }
+    }
+
+
+    $numericValue = $result.ToString()
+
+
+    try {
+        return [Int64]$numericValue
+    }
+    catch {
+        throw "Kunne ikke konvertere '$numericValue' til Int64 for ID '$Pfield1No'."
+    }
+}
+
+
+# =====================================================================
 # SEND JOB TIL API
 # =====================================================================
 
 function Send-Job {
 
     param(
+        [Parameter(Mandatory)]
+        [Int64]$JobId,
+
         [Parameter(Mandatory)]
         [string]$PfieldId,
 
@@ -82,15 +172,12 @@ function Send-Job {
     )
 
 
-    # -------------------------------------------------------------
-    # VIKTIG:
-    # "id" sendes IKKE til API-et.
-    # -------------------------------------------------------------
-
     $bodyObject = @{
+        id          = $JobId
         name        = $Name
         pfield1Id   = $PfieldId
         pfield1Name = $Name
+        pfield2Id   = 1198
         disabled    = $false
     }
 
@@ -107,7 +194,9 @@ function Send-Job {
     Write-Host "API PUT"
     Write-Host "============================================================"
     Write-Host "URL:       $ApiUrl"
+    Write-Host "Job ID:    $JobId"
     Write-Host "Pfield1Id: $PfieldId"
+    Write-Host "Pfield2Id: 1198"
     Write-Host "Name:      $Name"
     Write-Host ""
     Write-Host "JSON:"
@@ -152,7 +241,9 @@ function Send-Job {
         Write-Host "API FEIL"
         Write-Host "============================================================"
 
+        Write-Host "Job ID:    $JobId"
         Write-Host "Pfield1Id: $PfieldId"
+        Write-Host "Pfield2Id: 1198"
         Write-Host "Name:      $Name"
 
         Write-Host ""
@@ -164,10 +255,6 @@ function Send-Job {
         Write-Host $_.Exception.Message
 
 
-        # ---------------------------------------------------------
-        # ErrorDetails fra PowerShell
-        # ---------------------------------------------------------
-
         if ($_.ErrorDetails.Message) {
 
             Write-Host ""
@@ -176,17 +263,11 @@ function Send-Job {
         }
 
 
-        # ---------------------------------------------------------
-        # Forsøk å hente HTTP status og response body
-        # PowerShell 5.1
-        # ---------------------------------------------------------
-
         if ($_.Exception.Response) {
 
             try {
 
                 $httpResponse = $_.Exception.Response
-
 
                 Write-Host ""
                 Write-Host "HTTP Status:"
@@ -279,12 +360,13 @@ Write-Host "API: $ApiUrl"
 Write-Host "============================================================"
 
 
-$successCount  = 0
-$apiErrorCount = 0
-$skippedStatus = 0
-$skippedClosed = 0
-$emptyIdCount  = 0
-$rowNumber     = 0
+$successCount       = 0
+$apiErrorCount      = 0
+$conversionError    = 0
+$skippedStatus      = 0
+$skippedClosed      = 0
+$emptyIdCount       = 0
+$rowNumber          = 0
 
 
 # =====================================================================
@@ -345,14 +427,12 @@ try {
         $rowNumber++
 
 
-        # -------------------------------------------------------------
         # ExcelDataReader bruker 0-basert indeks
         #
-        # Excel kolonne C = index 2
-        # Excel kolonne D = index 3
-        # Excel kolonne E = index 4
-        # Excel kolonne N = index 13
-        # -------------------------------------------------------------
+        # C = 2
+        # D = 3
+        # E = 4
+        # N = 13
 
         $valueC = $reader.GetValue(2)
         $valueD = $reader.GetValue(3)
@@ -366,11 +446,10 @@ try {
         $closed      = [string]$valueN
 
 
-        # -------------------------------------------------------------
+        # =================================================================
         # FILTER 1
-        #
         # Kolonne E må være 3 eller 4
-        # -------------------------------------------------------------
+        # =================================================================
 
         if (
             $status.Trim() -ne "3" -and
@@ -383,11 +462,10 @@ try {
         }
 
 
-        # -------------------------------------------------------------
+        # =================================================================
         # FILTER 2
-        #
         # Kolonne N må IKKE inneholde CLSD
-        # -------------------------------------------------------------
+        # =================================================================
 
         if ($closed -match "CLSD") {
 
@@ -397,11 +475,10 @@ try {
         }
 
 
-        # -------------------------------------------------------------
+        # =================================================================
         # FILTER 3
-        #
-        # Kolonne C / ID må ha verdi
-        # -------------------------------------------------------------
+        # ID må finnes
+        # =================================================================
 
         if ([string]::IsNullOrWhiteSpace($id)) {
 
@@ -411,11 +488,9 @@ try {
         }
 
 
-        # -------------------------------------------------------------
-        # NAME
-        #
-        # Kolonne C + kolonne D
-        # -------------------------------------------------------------
+        # =================================================================
+        # NAME = C + D
+        # =================================================================
 
         $name = (
             ($id, $description) |
@@ -424,10 +499,6 @@ try {
             }
         ) -join " "
 
-
-        # -------------------------------------------------------------
-        # VIS RAD SOM SKAL SENDES
-        # -------------------------------------------------------------
 
         Write-Host ""
         Write-Host "------------------------------------------------------------"
@@ -438,13 +509,42 @@ try {
         Write-Host "Name:      $name"
 
 
-        # -------------------------------------------------------------
+        # =================================================================
+        # KONVERTER JOB ID
+        # =================================================================
+
+        try {
+
+            $jobId = Convert-ToJobId `
+                -Pfield1No $id `
+                -RemoveDash
+
+
+            Write-Host "Job ID:    $jobId"
+
+        }
+        catch {
+
+            $conversionError++
+
+            Write-Host ""
+            Write-Host "KONVERTERINGSFEIL"
+            Write-Host "Excel rad: $rowNumber"
+            Write-Host "ID:        $id"
+            Write-Host "Feil:      $($_.Exception.Message)"
+
+            continue
+        }
+
+
+        # =================================================================
         # SEND TIL API
-        # -------------------------------------------------------------
+        # =================================================================
 
         try {
 
             $null = Send-Job `
+                -JobId $jobId `
                 -PfieldId $id `
                 -Name $name
 
@@ -460,17 +560,12 @@ try {
             Write-Host "API-kallet feilet for Excel rad $rowNumber."
             Write-Host "Fortsetter med neste rad."
 
-            # Ikke stopp hele importen ved én feil.
             continue
         }
     }
 
 }
 finally {
-
-    # =================================================================
-    # CLEANUP
-    # =================================================================
 
     if ($reader) {
 
@@ -508,6 +603,7 @@ Write-Host "FERDIG"
 Write-Host "============================================================"
 Write-Host "API OK:                    $successCount"
 Write-Host "API feil:                  $apiErrorCount"
+Write-Host "Job ID konverteringsfeil:  $conversionError"
 Write-Host "Hoppet over status != 3/4: $skippedStatus"
 Write-Host "Hoppet over CLSD:          $skippedClosed"
 Write-Host "Hoppet over tom ID:        $emptyIdCount"
