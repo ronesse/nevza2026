@@ -6,7 +6,8 @@
 </style></head><body><main class="container">
 <h1>PowerShell – XLS til API</h1><p>Hele skriptet ligger i tekstfeltet. Kopier det direkte til serveren. Du kan også laste ned en <code>.ps1</code>-fil.</p>
 <div class="actions"><button id="copy">📋 Kopier hele skriptet</button><button class="secondary" id="select">Marker alt</button><button class="secondary" id="download">Last ned .ps1</button></div>
-<textarea id="script" spellcheck="false" wrap="off" aria-label="PowerShell-skript">param(
+<textarea id="script" spellcheck="false" wrap="off" aria-label="PowerShell-skript">```powershell
+param(
     [string]$XlsPath = "$PSScriptRoot\test.xls",
     [string]$ApiUrl  = "https://demoeirikapi.wintid.no/job",
     [string]$BearerToken = ""
@@ -98,7 +99,7 @@ function Convert-ToJobId {
 
     # XLS:
     # 8-00102-99-100
-    # -&gt;
+    # ->
     # 80010299100
 
     if ($RemoveDash) {
@@ -109,7 +110,7 @@ function Convert-ToJobId {
     # Spesialregel:
     #
     # LA0122P50113
-    # -&gt;
+    # ->
     # 4270122450113
 
     if ($value.StartsWith("LA")) {
@@ -123,6 +124,7 @@ function Convert-ToJobId {
     foreach ($char in $value.ToCharArray()) {
 
         $c = $char.ToString()
+
 
         if ($c -match '^\d$') {
 
@@ -188,13 +190,17 @@ function Send-Job {
 
 
     Write-Host ""
-    Write-Host "------------------------------------------------------------"
+    Write-Host "============================================================"
     Write-Host "API PUT"
+    Write-Host "============================================================"
     Write-Host "URL:       $ApiUrl"
     Write-Host "Job ID:    $JobId"
     Write-Host "Pfield1Id: $PfieldId"
     Write-Host "Name:      $Name"
-    Write-Host "JSON:      $json"
+    Write-Host ""
+    Write-Host "JSON:"
+    Write-Host $json
+    Write-Host ""
 
 
     try {
@@ -208,19 +214,128 @@ function Send-Job {
             -ErrorAction Stop
 
 
-        Write-Host "RESULTAT:  API OK"
+        Write-Host "RESULTAT: API OK"
+
+        if ($null -ne $response) {
+
+            Write-Host ""
+            Write-Host "API RESPONSE:"
+
+            try {
+                $response | ConvertTo-Json -Depth 10
+            }
+            catch {
+                Write-Host $response
+            }
+        }
+
 
         return $response
 
     }
     catch {
 
-        Write-Host "RESULTAT:  API FEIL"
-        Write-Host "FEIL:      $($_.Exception.Message)"
+        Write-Host ""
+        Write-Host "============================================================"
+        Write-Host "API FEIL"
+        Write-Host "============================================================"
+        Write-Host "Job ID:    $JobId"
+        Write-Host "Pfield1Id: $PfieldId"
+        Write-Host "Name:      $Name"
+        Write-Host ""
+
+        Write-Host "JSON:"
+        Write-Host $json
+        Write-Host ""
+
+        Write-Host "Exception:"
+        Write-Host $_.Exception.Message
+
 
         if ($_.ErrorDetails.Message) {
-            Write-Host "API SVAR:  $($_.ErrorDetails.Message)"
+
+            Write-Host ""
+            Write-Host "ErrorDetails:"
+            Write-Host $_.ErrorDetails.Message
         }
+
+
+        # -------------------------------------------------------------
+        # PowerShell 5.1:
+        # Forsøk å hente HTTP status og response body
+        # -------------------------------------------------------------
+
+        if ($_.Exception.Response) {
+
+            try {
+
+                $httpResponse = $_.Exception.Response
+
+
+                Write-Host ""
+                Write-Host "HTTP Status:"
+
+                try {
+                    Write-Host ([int]$httpResponse.StatusCode)
+                    Write-Host $httpResponse.StatusDescription
+                }
+                catch {
+                    Write-Host "Kunne ikke lese statuskode."
+                }
+
+
+                Write-Host ""
+                Write-Host "Response body:"
+
+
+                $responseStream = $httpResponse.GetResponseStream()
+
+                if ($responseStream) {
+
+                    $streamReader = New-Object System.IO.StreamReader(
+                        $responseStream
+                    )
+
+                    try {
+
+                        $responseBody = $streamReader.ReadToEnd()
+
+                        if ([string]::IsNullOrWhiteSpace($responseBody)) {
+                            Write-Host "<tom response body>"
+                        }
+                        else {
+                            Write-Host $responseBody
+                        }
+
+                    }
+                    finally {
+
+                        $streamReader.Close()
+                        $streamReader.Dispose()
+                    }
+
+                }
+                else {
+
+                    Write-Host "<ingen response stream>"
+                }
+
+            }
+            catch {
+
+                Write-Host ""
+                Write-Host "Kunne ikke lese HTTP response:"
+                Write-Host $_.Exception.Message
+            }
+        }
+
+
+        Write-Host ""
+        Write-Host "Base exception:"
+        Write-Host $_.Exception.GetBaseException().Message
+
+        Write-Host "============================================================"
+
 
         throw
     }
@@ -233,20 +348,20 @@ function Send-Job {
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host "XLS -&gt; API TEST"
+Write-Host "XLS -> API TEST"
 Write-Host "============================================================"
 Write-Host "XLS: $XlsPath"
 Write-Host "API: $ApiUrl"
 Write-Host "============================================================"
 
 
-$successCount    = 0
-$apiErrorCount   = 0
-$conversionError = 0
-$skippedStatus   = 0
-$skippedClosed   = 0
-$emptyIdCount    = 0
-$rowNumber       = 0
+$successCount       = 0
+$apiErrorCount      = 0
+$conversionError    = 0
+$skippedStatus      = 0
+$skippedClosed      = 0
+$emptyIdCount       = 0
+$rowNumber          = 0
 
 
 # =====================================================================
@@ -265,7 +380,8 @@ Copy-Item `
 
 
 Write-Host ""
-Write-Host "Temp-fil: $tempPath"
+Write-Host "Temp-fil:"
+Write-Host $tempPath
 
 
 $stream = $null
@@ -369,7 +485,7 @@ try {
 
 
         # -------------------------------------------------------------
-        # NAME = C + D
+        # NAME = kolonne C + kolonne D
         # -------------------------------------------------------------
 
         $name = (
@@ -378,6 +494,15 @@ try {
                 -not [string]::IsNullOrWhiteSpace($_)
             }
         ) -join " "
+
+
+        Write-Host ""
+        Write-Host "------------------------------------------------------------"
+        Write-Host "Excel rad: $rowNumber"
+        Write-Host "ID:        $id"
+        Write-Host "Status E:  $status"
+        Write-Host "Kolonne N: $closed"
+        Write-Host "Name:      $name"
 
 
         # -------------------------------------------------------------
@@ -389,6 +514,8 @@ try {
             $jobId = Convert-ToJobId `
                 -Pfield1No $id `
                 -RemoveDash
+
+            Write-Host "Job ID:    $jobId"
 
         }
         catch {
@@ -428,6 +555,10 @@ try {
             Write-Host "API-kallet feilet for Excel rad $rowNumber."
             Write-Host "Fortsetter med neste rad."
 
+            # VIKTIG:
+            # Ikke throw her.
+            # Da fortsetter scriptet med neste XLS-rad.
+
             continue
         }
     }
@@ -436,12 +567,22 @@ try {
 finally {
 
     if ($reader) {
-        $reader.Dispose()
+
+        try {
+            $reader.Dispose()
+        }
+        catch {}
     }
 
+
     if ($stream) {
-        $stream.Dispose()
+
+        try {
+            $stream.Dispose()
+        }
+        catch {}
     }
+
 
     Remove-Item `
         -Path $tempPath `
@@ -466,6 +607,7 @@ Write-Host "Hoppet over status != 3/4: $skippedStatus"
 Write-Host "Hoppet over CLSD:          $skippedClosed"
 Write-Host "Hoppet over tom ID:        $emptyIdCount"
 Write-Host "============================================================"
+```
 </textarea><div id="status" role="status" aria-live="polite"></div><small>Kopieringen bruker nettleserens utklippstavle. Hvis knappen ikke virker, bruk «Marker alt» og Ctrl+C.</small>
 </main><script>
 const field=document.getElementById('script');const status=document.getElementById('status');
