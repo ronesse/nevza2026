@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="no"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PowerShell – Kopier skript</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color-scheme:dark;background:#101827;color:#eaf0fb}
+*{box-sizing:border-box}body{margin:0;padding:24px 12px}.container{max-width:1050px;margin:auto}h1{font-size:clamp(1.3rem,3vw,2rem);margin:0 0 8px}p{color:#b9c4d8;margin:0 0 20px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}button{border:0;border-radius:9px;background:#3b82f6;color:#fff;font-size:16px;font-weight:650;padding:12px 18px;cursor:pointer}button.secondary{background:#29384f}button:hover{filter:brightness(1.12)}textarea{display:block;width:100%;height:min(72vh,850px);min-height:360px;resize:vertical;border-radius:12px;border:1px solid #41506a;background:#0b1220;color:#e4f1ff;padding:18px;font:14px/1.55 Consolas,'Courier New',monospace;tab-size:4;white-space:pre;overflow:auto}#status{color:#8dd7ac;min-height:24px;margin-top:10px}small{color:#b9c4d8}
+</style></head><body><main class="container">
+<h1>PowerShell – XLS til API</h1><p>Hele skriptet ligger i tekstfeltet. Kopier det direkte til serveren. Du kan også laste ned en <code>.ps1</code>-fil.</p>
+<div class="actions"><button id="copy">📋 Kopier hele skriptet</button><button class="secondary" id="select">Marker alt</button><button class="secondary" id="download">Last ned .ps1</button></div>
+<textarea id="script" spellcheck="false" wrap="off" aria-label="PowerShell-skript">param(
+    [string]$XlsPath = "$PSScriptRoot\test.xls",
+    [string]$ApiUrl  = "https://demoeirikapi.wintid.no/job",
+    [string]$BearerToken = ""
+)
+
+$ErrorActionPreference = "Stop"
+
+
+# =====================================================================
+# FILER / DLL
+# =====================================================================
+
+$excelDataReaderDll = Join-Path $PSScriptRoot "lib\ExcelDataReader.dll"
+$valueTupleDll      = Join-Path $PSScriptRoot "lib\System.ValueTuple.dll"
+
+
+if (-not (Test-Path $XlsPath)) {
+    throw "Finner ikke XLS-fil: $XlsPath"
+}
+
+if (-not (Test-Path $excelDataReaderDll)) {
+    throw "Finner ikke ExcelDataReader.dll: $excelDataReaderDll"
+}
+
+if (-not (Test-Path $valueTupleDll)) {
+    throw "Finner ikke System.ValueTuple.dll: $valueTupleDll"
+}
+
+
+# =====================================================================
+# LAST DLL
+# =====================================================================
+
+Write-Host ""
+Write-Host "Laster ExcelDataReader..."
+
+Add-Type -Path $valueTupleDll
+Add-Type -Path $excelDataReaderDll
+
+Write-Host "ExcelDataReader lastet."
+
+
+# =====================================================================
+# API HEADERS
+# =====================================================================
+
+function Get-ApiHeaders {
+
+    $headers = @{
+        Accept = "*/*"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($BearerToken)) {
+        $headers["Authorization"] = "Bearer $BearerToken"
+    }
+
+    return $headers
+}
+
+
+# =====================================================================
+# JOB ID KONVERTERING
+# =====================================================================
+
+function Convert-ToJobId {
+
+    param(
+        [Parameter(Mandatory)]
+        [string]$Pfield1No,
+
+        [switch]$RemoveDash
+    )
+
+    $map = @{
+        'I' = '3'
+        'P' = '4'
+        'S' = '5'
+        'Z' = '6'
+        'B' = '7'
+        'N' = '8'
+        'A' = '01'
+        'O' = '15'
+        'W' = '23'
+        'X' = '24'
+    }
+
+    $value = $Pfield1No.Trim().ToUpper()
+
+
+    # XLS:
+    # 8-00102-99-100
+    # -&gt;
+    # 80010299100
+
+    if ($RemoveDash) {
+        $value = $value -replace "-", ""
+    }
+
+
+    # Spesialregel:
+    #
+    # LA0122P50113
+    # -&gt;
+    # 4270122450113
+
+    if ($value.StartsWith("LA")) {
+        $value = "427" + $value.Substring(2)
+    }
+
+
+    $result = New-Object System.Text.StringBuilder
+
+
+    foreach ($char in $value.ToCharArray()) {
+
+        $c = $char.ToString()
+
+        if ($c -match '^\d$') {
+
+            [void]$result.Append($c)
+
+        }
+        elseif ($map.ContainsKey($c)) {
+
+            [void]$result.Append($map[$c])
+
+        }
+        else {
+
+            throw "Ukjent tegn '$c' i ID '$Pfield1No'."
+        }
+    }
+
+
+    $numericValue = $result.ToString()
+
+
+    try {
+        return [Int64]$numericValue
+    }
+    catch {
+        throw "Kunne ikke konvertere '$numericValue' til Int64 for ID '$Pfield1No'."
+    }
+}
+
+
+# =====================================================================
+# SEND JOB TIL API
+# =====================================================================
+
+function Send-Job {
+
+    param(
+        [Parameter(Mandatory)]
+        [Int64]$JobId,
+
+        [Parameter(Mandatory)]
+        [string]$PfieldId,
+
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+
+    $bodyObject = @{
+        id          = $JobId
+        name        = $Name
+        pfield1Id   = $PfieldId
+        pfield1Name = $Name
+        disabled    = $false
+    }
+
+
+    $json = $bodyObject | ConvertTo-Json -Compress
+
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+
+    $headers = Get-ApiHeaders
+
+
+    Write-Host ""
+    Write-Host "------------------------------------------------------------"
+    Write-Host "API PUT"
+    Write-Host "URL:       $ApiUrl"
+    Write-Host "Job ID:    $JobId"
+    Write-Host "Pfield1Id: $PfieldId"
+    Write-Host "Name:      $Name"
+    Write-Host "JSON:      $json"
+
+
+    try {
+
+        $response = Invoke-RestMethod `
+            -Uri $ApiUrl `
+            -Method Put `
+            -Headers $headers `
+            -ContentType "application/json; charset=utf-8" `
+            -Body $bodyBytes `
+            -ErrorAction Stop
+
+
+        Write-Host "RESULTAT:  API OK"
+
+        return $response
+
+    }
+    catch {
+
+        Write-Host "RESULTAT:  API FEIL"
+        Write-Host "FEIL:      $($_.Exception.Message)"
+
+        if ($_.ErrorDetails.Message) {
+            Write-Host "API SVAR:  $($_.ErrorDetails.Message)"
+        }
+
+        throw
+    }
+}
+
+
+# =====================================================================
+# START
+# =====================================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host "XLS -&gt; API TEST"
+Write-Host "============================================================"
+Write-Host "XLS: $XlsPath"
+Write-Host "API: $ApiUrl"
+Write-Host "============================================================"
+
+
+$successCount    = 0
+$apiErrorCount   = 0
+$conversionError = 0
+$skippedStatus   = 0
+$skippedClosed   = 0
+$emptyIdCount    = 0
+$rowNumber       = 0
+
+
+# =====================================================================
+# KOPIER XLS TIL TEMP
+# =====================================================================
+
+$tempPath = Join-Path `
+    $env:TEMP `
+    ("xls_api_test_{0}.xls" -f [Guid]::NewGuid().ToString("N"))
+
+
+Copy-Item `
+    -Path $XlsPath `
+    -Destination $tempPath `
+    -Force
+
+
+Write-Host ""
+Write-Host "Temp-fil: $tempPath"
+
+
+$stream = $null
+$reader = $null
+
+
+try {
+
+    # =================================================================
+    # ÅPNE XLS
+    # =================================================================
+
+    $stream = [System.IO.File]::Open(
+        $tempPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite
+    )
+
+
+    $reader = [ExcelDataReader.ExcelReaderFactory]::CreateBinaryReader(
+        $stream
+    )
+
+
+    Write-Host ""
+    Write-Host "XLS åpnet."
+    Write-Host "Leser første worksheet..."
+    Write-Host ""
+
+
+    # =================================================================
+    # LES FØRSTE WORKSHEET
+    # =================================================================
+
+    while ($reader.Read()) {
+
+        $rowNumber++
+
+
+        # -------------------------------------------------------------
+        # ExcelDataReader bruker 0-basert indeks:
+        #
+        # C = 2
+        # D = 3
+        # E = 4
+        # N = 13
+        # -------------------------------------------------------------
+
+        $valueC = $reader.GetValue(2)
+        $valueD = $reader.GetValue(3)
+        $valueE = $reader.GetValue(4)
+        $valueN = $reader.GetValue(13)
+
+
+        $id          = [string]$valueC
+        $description = [string]$valueD
+        $status      = [string]$valueE
+        $closed      = [string]$valueN
+
+
+        # -------------------------------------------------------------
+        # FILTER 1:
+        # Kolonne E må være 3 eller 4
+        # -------------------------------------------------------------
+
+        if (
+            $status.Trim() -ne "3" -and
+            $status.Trim() -ne "4"
+        ) {
+
+            $skippedStatus++
+
+            continue
+        }
+
+
+        # -------------------------------------------------------------
+        # FILTER 2:
+        # Kolonne N må IKKE inneholde CLSD
+        # -------------------------------------------------------------
+
+        if ($closed -match "CLSD") {
+
+            $skippedClosed++
+
+            continue
+        }
+
+
+        # -------------------------------------------------------------
+        # ID må finnes
+        # -------------------------------------------------------------
+
+        if ([string]::IsNullOrWhiteSpace($id)) {
+
+            $emptyIdCount++
+
+            continue
+        }
+
+
+        # -------------------------------------------------------------
+        # NAME = C + D
+        # -------------------------------------------------------------
+
+        $name = (
+            ($id, $description) |
+            Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_)
+            }
+        ) -join " "
+
+
+        # -------------------------------------------------------------
+        # KONVERTER JOB ID
+        # -------------------------------------------------------------
+
+        try {
+
+            $jobId = Convert-ToJobId `
+                -Pfield1No $id `
+                -RemoveDash
+
+        }
+        catch {
+
+            $conversionError++
+
+            Write-Host ""
+            Write-Host "KONVERTERINGSFEIL"
+            Write-Host "Excel rad: $rowNumber"
+            Write-Host "ID:        $id"
+            Write-Host "Feil:      $($_.Exception.Message)"
+
+            continue
+        }
+
+
+        # -------------------------------------------------------------
+        # SEND TIL API
+        # -------------------------------------------------------------
+
+        try {
+
+            $null = Send-Job `
+                -JobId $jobId `
+                -PfieldId $id `
+                -Name $name
+
+
+            $successCount++
+
+        }
+        catch {
+
+            $apiErrorCount++
+
+            Write-Host ""
+            Write-Host "API-kallet feilet for Excel rad $rowNumber."
+            Write-Host "Fortsetter med neste rad."
+
+            continue
+        }
+    }
+
+}
+finally {
+
+    if ($reader) {
+        $reader.Dispose()
+    }
+
+    if ($stream) {
+        $stream.Dispose()
+    }
+
+    Remove-Item `
+        -Path $tempPath `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
+
+
+# =====================================================================
+# RESULTAT
+# =====================================================================
+
+Write-Host ""
+Write-Host ""
+Write-Host "============================================================"
+Write-Host "FERDIG"
+Write-Host "============================================================"
+Write-Host "API OK:                    $successCount"
+Write-Host "API feil:                  $apiErrorCount"
+Write-Host "Job ID konverteringsfeil:  $conversionError"
+Write-Host "Hoppet over status != 3/4: $skippedStatus"
+Write-Host "Hoppet over CLSD:          $skippedClosed"
+Write-Host "Hoppet over tom ID:        $emptyIdCount"
+Write-Host "============================================================"
+</textarea><div id="status" role="status" aria-live="polite"></div><small>Kopieringen bruker nettleserens utklippstavle. Hvis knappen ikke virker, bruk «Marker alt» og Ctrl+C.</small>
+</main><script>
+const field=document.getElementById('script');const status=document.getElementById('status');
+document.getElementById('select').addEventListener('click',()=>{field.focus();field.select();status.textContent='Alt er markert – trykk Ctrl+C for å kopiere.'});
+document.getElementById('copy').addEventListener('click',async()=>{field.focus();field.select();let ok=false;try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(field.value);ok=true}else{ok=document.execCommand('copy')}}catch(e){try{ok=document.execCommand('copy')}catch(e2){}}status.textContent=ok?'✓ Hele skriptet er kopiert!':'Teksten er markert. Trykk Ctrl+C for å kopiere.'});
+document.getElementById('download').addEventListener('click',()=>{const blob=new Blob(['\ufeff',field.value],{type:'text/plain;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='xls_til_api.ps1';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);status.textContent='PS1-filen er klargjort for nedlasting.'});
+</script></body></html>
