@@ -6,8 +6,7 @@
 </style></head><body><main class="container">
 <h1>PowerShell – XLS til API</h1><p>Hele skriptet ligger i tekstfeltet. Kopier det direkte til serveren. Du kan også laste ned en <code>.ps1</code>-fil.</p>
 <div class="actions"><button id="copy">📋 Kopier hele skriptet</button><button class="secondary" id="select">Marker alt</button><button class="secondary" id="download">Last ned .ps1</button></div>
-<textarea id="script" spellcheck="false" wrap="off" aria-label="PowerShell-skript">```powershell
-param(
+<textarea id="script" spellcheck="false" wrap="off" aria-label="PowerShell-skript">param(
     [string]$XlsPath = "$PSScriptRoot\test.xls",
     [string]$ApiUrl  = "https://demoeirikapi.wintid.no/job",
     [string]$BearerToken = ""
@@ -69,102 +68,12 @@ function Get-ApiHeaders {
 
 
 # =====================================================================
-# JOB ID KONVERTERING
-# =====================================================================
-
-function Convert-ToJobId {
-
-    param(
-        [Parameter(Mandatory)]
-        [string]$Pfield1No,
-
-        [switch]$RemoveDash
-    )
-
-    $map = @{
-        'I' = '3'
-        'P' = '4'
-        'S' = '5'
-        'Z' = '6'
-        'B' = '7'
-        'N' = '8'
-        'A' = '01'
-        'O' = '15'
-        'W' = '23'
-        'X' = '24'
-    }
-
-    $value = $Pfield1No.Trim().ToUpper()
-
-
-    # XLS:
-    # 8-00102-99-100
-    # ->
-    # 80010299100
-
-    if ($RemoveDash) {
-        $value = $value -replace "-", ""
-    }
-
-
-    # Spesialregel:
-    #
-    # LA0122P50113
-    # ->
-    # 4270122450113
-
-    if ($value.StartsWith("LA")) {
-        $value = "427" + $value.Substring(2)
-    }
-
-
-    $result = New-Object System.Text.StringBuilder
-
-
-    foreach ($char in $value.ToCharArray()) {
-
-        $c = $char.ToString()
-
-
-        if ($c -match '^\d$') {
-
-            [void]$result.Append($c)
-
-        }
-        elseif ($map.ContainsKey($c)) {
-
-            [void]$result.Append($map[$c])
-
-        }
-        else {
-
-            throw "Ukjent tegn '$c' i ID '$Pfield1No'."
-        }
-    }
-
-
-    $numericValue = $result.ToString()
-
-
-    try {
-        return [Int64]$numericValue
-    }
-    catch {
-        throw "Kunne ikke konvertere '$numericValue' til Int64 for ID '$Pfield1No'."
-    }
-}
-
-
-# =====================================================================
 # SEND JOB TIL API
 # =====================================================================
 
 function Send-Job {
 
     param(
-        [Parameter(Mandatory)]
-        [Int64]$JobId,
-
         [Parameter(Mandatory)]
         [string]$PfieldId,
 
@@ -173,8 +82,12 @@ function Send-Job {
     )
 
 
+    # -------------------------------------------------------------
+    # VIKTIG:
+    # "id" sendes IKKE til API-et.
+    # -------------------------------------------------------------
+
     $bodyObject = @{
-        id          = $JobId
         name        = $Name
         pfield1Id   = $PfieldId
         pfield1Name = $Name
@@ -194,7 +107,6 @@ function Send-Job {
     Write-Host "API PUT"
     Write-Host "============================================================"
     Write-Host "URL:       $ApiUrl"
-    Write-Host "Job ID:    $JobId"
     Write-Host "Pfield1Id: $PfieldId"
     Write-Host "Name:      $Name"
     Write-Host ""
@@ -216,6 +128,7 @@ function Send-Job {
 
         Write-Host "RESULTAT: API OK"
 
+
         if ($null -ne $response) {
 
             Write-Host ""
@@ -231,7 +144,6 @@ function Send-Job {
 
 
         return $response
-
     }
     catch {
 
@@ -239,18 +151,22 @@ function Send-Job {
         Write-Host "============================================================"
         Write-Host "API FEIL"
         Write-Host "============================================================"
-        Write-Host "Job ID:    $JobId"
+
         Write-Host "Pfield1Id: $PfieldId"
         Write-Host "Name:      $Name"
-        Write-Host ""
 
+        Write-Host ""
         Write-Host "JSON:"
         Write-Host $json
-        Write-Host ""
 
+        Write-Host ""
         Write-Host "Exception:"
         Write-Host $_.Exception.Message
 
+
+        # ---------------------------------------------------------
+        # ErrorDetails fra PowerShell
+        # ---------------------------------------------------------
 
         if ($_.ErrorDetails.Message) {
 
@@ -260,10 +176,10 @@ function Send-Job {
         }
 
 
-        # -------------------------------------------------------------
-        # PowerShell 5.1:
+        # ---------------------------------------------------------
         # Forsøk å hente HTTP status og response body
-        # -------------------------------------------------------------
+        # PowerShell 5.1
+        # ---------------------------------------------------------
 
         if ($_.Exception.Response) {
 
@@ -276,11 +192,14 @@ function Send-Job {
                 Write-Host "HTTP Status:"
 
                 try {
+
                     Write-Host ([int]$httpResponse.StatusCode)
                     Write-Host $httpResponse.StatusDescription
+
                 }
                 catch {
-                    Write-Host "Kunne ikke lese statuskode."
+
+                    Write-Host "Kunne ikke lese HTTP status."
                 }
 
 
@@ -290,20 +209,25 @@ function Send-Job {
 
                 $responseStream = $httpResponse.GetResponseStream()
 
+
                 if ($responseStream) {
 
-                    $streamReader = New-Object System.IO.StreamReader(
-                        $responseStream
-                    )
+                    $streamReader = New-Object `
+                        System.IO.StreamReader($responseStream)
+
 
                     try {
 
                         $responseBody = $streamReader.ReadToEnd()
 
+
                         if ([string]::IsNullOrWhiteSpace($responseBody)) {
+
                             Write-Host "<tom response body>"
+
                         }
                         else {
+
                             Write-Host $responseBody
                         }
 
@@ -355,13 +279,12 @@ Write-Host "API: $ApiUrl"
 Write-Host "============================================================"
 
 
-$successCount       = 0
-$apiErrorCount      = 0
-$conversionError    = 0
-$skippedStatus      = 0
-$skippedClosed      = 0
-$emptyIdCount       = 0
-$rowNumber          = 0
+$successCount  = 0
+$apiErrorCount = 0
+$skippedStatus = 0
+$skippedClosed = 0
+$emptyIdCount  = 0
+$rowNumber     = 0
 
 
 # =====================================================================
@@ -423,12 +346,12 @@ try {
 
 
         # -------------------------------------------------------------
-        # ExcelDataReader bruker 0-basert indeks:
+        # ExcelDataReader bruker 0-basert indeks
         #
-        # C = 2
-        # D = 3
-        # E = 4
-        # N = 13
+        # Excel kolonne C = index 2
+        # Excel kolonne D = index 3
+        # Excel kolonne E = index 4
+        # Excel kolonne N = index 13
         # -------------------------------------------------------------
 
         $valueC = $reader.GetValue(2)
@@ -444,7 +367,8 @@ try {
 
 
         # -------------------------------------------------------------
-        # FILTER 1:
+        # FILTER 1
+        #
         # Kolonne E må være 3 eller 4
         # -------------------------------------------------------------
 
@@ -460,7 +384,8 @@ try {
 
 
         # -------------------------------------------------------------
-        # FILTER 2:
+        # FILTER 2
+        #
         # Kolonne N må IKKE inneholde CLSD
         # -------------------------------------------------------------
 
@@ -473,7 +398,9 @@ try {
 
 
         # -------------------------------------------------------------
-        # ID må finnes
+        # FILTER 3
+        #
+        # Kolonne C / ID må ha verdi
         # -------------------------------------------------------------
 
         if ([string]::IsNullOrWhiteSpace($id)) {
@@ -485,7 +412,9 @@ try {
 
 
         # -------------------------------------------------------------
-        # NAME = kolonne C + kolonne D
+        # NAME
+        #
+        # Kolonne C + kolonne D
         # -------------------------------------------------------------
 
         $name = (
@@ -495,6 +424,10 @@ try {
             }
         ) -join " "
 
+
+        # -------------------------------------------------------------
+        # VIS RAD SOM SKAL SENDES
+        # -------------------------------------------------------------
 
         Write-Host ""
         Write-Host "------------------------------------------------------------"
@@ -506,40 +439,12 @@ try {
 
 
         # -------------------------------------------------------------
-        # KONVERTER JOB ID
-        # -------------------------------------------------------------
-
-        try {
-
-            $jobId = Convert-ToJobId `
-                -Pfield1No $id `
-                -RemoveDash
-
-            Write-Host "Job ID:    $jobId"
-
-        }
-        catch {
-
-            $conversionError++
-
-            Write-Host ""
-            Write-Host "KONVERTERINGSFEIL"
-            Write-Host "Excel rad: $rowNumber"
-            Write-Host "ID:        $id"
-            Write-Host "Feil:      $($_.Exception.Message)"
-
-            continue
-        }
-
-
-        # -------------------------------------------------------------
         # SEND TIL API
         # -------------------------------------------------------------
 
         try {
 
             $null = Send-Job `
-                -JobId $jobId `
                 -PfieldId $id `
                 -Name $name
 
@@ -555,16 +460,17 @@ try {
             Write-Host "API-kallet feilet for Excel rad $rowNumber."
             Write-Host "Fortsetter med neste rad."
 
-            # VIKTIG:
-            # Ikke throw her.
-            # Da fortsetter scriptet med neste XLS-rad.
-
+            # Ikke stopp hele importen ved én feil.
             continue
         }
     }
 
 }
 finally {
+
+    # =================================================================
+    # CLEANUP
+    # =================================================================
 
     if ($reader) {
 
@@ -602,12 +508,10 @@ Write-Host "FERDIG"
 Write-Host "============================================================"
 Write-Host "API OK:                    $successCount"
 Write-Host "API feil:                  $apiErrorCount"
-Write-Host "Job ID konverteringsfeil:  $conversionError"
 Write-Host "Hoppet over status != 3/4: $skippedStatus"
 Write-Host "Hoppet over CLSD:          $skippedClosed"
 Write-Host "Hoppet over tom ID:        $emptyIdCount"
 Write-Host "============================================================"
-```
 </textarea><div id="status" role="status" aria-live="polite"></div><small>Kopieringen bruker nettleserens utklippstavle. Hvis knappen ikke virker, bruk «Marker alt» og Ctrl+C.</small>
 </main><script>
 const field=document.getElementById('script');const status=document.getElementById('status');
