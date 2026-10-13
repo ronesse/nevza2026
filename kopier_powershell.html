@@ -7,76 +7,266 @@
 <h1>PowerShell – XLS til API</h1><p>Hele skriptet ligger i tekstfeltet. Kopier det direkte til serveren. Du kan også laste ned en <code>.ps1</code>-fil.</p>
 <div class="actions"><button id="copy">📋 Kopier hele skriptet</button><button class="secondary" id="select">Marker alt</button><button class="secondary" id="download">Last ned .ps1</button></div>
 <textarea id="script" spellcheck="false" wrap="off" aria-label="PowerShell-skript">param(
-    [string]$XlsPath = "$PSScriptRoot\test.xls",
-    [string]$ApiUrl  = "https://demoeirikapi.wintid.no/job",
-    [string]$BearerToken = ""
+    [string]$ConfigFile = "$PSScriptRoot\config.json"
 )
 
 $ErrorActionPreference = "Stop"
 
-
 # =====================================================================
-# FILER / DLL
+# CONFIG
 # =====================================================================
 
-$excelDataReaderDll = Join-Path $PSScriptRoot "lib\ExcelDataReader.dll"
-$valueTupleDll      = Join-Path $PSScriptRoot "lib\System.ValueTuple.dll"
-
-
-if (-not (Test-Path $XlsPath)) {
-    throw "Finner ikke XLS-fil: $XlsPath"
+if (-not (Test-Path $ConfigFile)) {
+    throw "Finner ikke config-fil: $ConfigFile"
 }
 
-if (-not (Test-Path $excelDataReaderDll)) {
-    throw "Finner ikke ExcelDataReader.dll: $excelDataReaderDll"
+$config = Get-Content -Path $ConfigFile -Raw | ConvertFrom-Json
+
+$basePath = $PSScriptRoot
+
+$excelPath = Join-Path $basePath $config.Files.XlsPath
+$txtPath   = Join-Path $basePath $config.Files.TxtPath
+$logPath   = Join-Path $basePath $config.Files.LogPath
+$statePath = Join-Path $basePath $config.Files.StatePath
+$csvPath   = Join-Path $basePath $config.Files.CsvPath
+
+$jobApiUrl   = [string]$config.Api.JobUrl
+$bearerToken = [string]$config.Api.BearerToken
+
+$fileStabilitySeconds = 5
+if ($null -ne $config.Settings.FileStabilitySeconds) {
+    $fileStabilitySeconds = [int]$config.Settings.FileStabilitySeconds
 }
 
-if (-not (Test-Path $valueTupleDll)) {
-    throw "Finner ikke System.ValueTuple.dll: $valueTupleDll"
+$runSqlImport = $false
+if ($null -ne $config.Settings.RunSqlImport) {
+    $runSqlImport = [bool]$config.Settings.RunSqlImport
 }
 
+# Fast verdi som API-et krever. Skal sendes som STRING.
+$pfield2Id = "1198"
 
 # =====================================================================
-# LAST DLL
+# MAPPER
 # =====================================================================
 
-Write-Host ""
-Write-Host "Laster ExcelDataReader..."
-
-Add-Type -Path $valueTupleDll
-Add-Type -Path $excelDataReaderDll
-
-Write-Host "ExcelDataReader lastet."
-
+foreach ($path in @(
+    (Split-Path $logPath -Parent),
+    (Split-Path $statePath -Parent),
+    (Split-Path $csvPath -Parent)
+)) {
+    if (-not [string]::IsNullOrWhiteSpace($path) -and -not (Test-Path $path)) {
+        New-Item -ItemType Directory -Path $path -Force | Out-Null
+    }
+}
 
 # =====================================================================
-# API HEADERS
+# LOGGING
+# =====================================================================
+
+function Write-Log {
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Message
+    )
+
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -Path $logPath -Value "$timestamp  $Message" -Encoding UTF8
+}
+
+# =====================================================================
+# FEILTEKST
+# =====================================================================
+
+function Get-ErrorText {
+    param($ErrorRecord)
+
+    if ($null -eq $ErrorRecord) {
+        return "Ukjent feil"
+    }
+
+    $message = [string]$ErrorRecord.Exception.Message
+
+    try {
+        $base = $ErrorRecord.Exception.GetBaseException().Message
+        if (-not [string]::IsNullOrWhiteSpace($base) -and $base -ne $message) {
+            $message += " | Base: $base"
+        }
+    }
+    catch {}
+
+    if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
+        $message += " | Details: $($ErrorRecord.ErrorDetails.Message)"
+    }
+
+    return $message
+}
+
+# =====================================================================
+# API
 # =====================================================================
 
 function Get-ApiHeaders {
+    $headers = @{ Accept = "*/*" }
 
-    $headers = @{
-        Accept = "*/*"
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($BearerToken)) {
-        $headers["Authorization"] = "Bearer $BearerToken"
+    if (-not [string]::IsNullOrWhiteSpace($bearerToken)) {
+        $headers["Authorization"] = "Bearer $bearerToken"
     }
 
     return $headers
 }
 
+function Send-Job {
+    param(
+        [Parameter(Mandatory)] [Int64]$JobId,
+        [Parameter(Mandatory)] [string]$PfieldId,
+        [Parameter(Mandatory)] [string]$Name
+    )
+
+    $bodyObject = @{
+        id          = $JobId
+        name        = $Name
+        pfield1Id   = $PfieldId
+        pfield1Name = $Name
+        pfield2Id   = $pfield2Id
+        disabled    = $false
+    }
+
+    $json = $bodyObject | ConvertTo-Json -Compress
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $headers = Get-ApiHeaders
+
+    Invoke-RestMethod `
+        -Uri $jobApiUrl `
+        -Method Put `
+        -Headers $headers `
+        -ContentType "application/json; charset=utf-8" `
+        -Body $bodyBytes `
+        -ErrorAction Stop
+}
 
 # =====================================================================
-# JOB ID KONVERTERING
+# STATE
+# =====================================================================
+
+function New-EmptyState {
+    return [PSCustomObject]@{
+        Xls = [PSCustomObject]@{
+            LastProcessedWriteTimeUtc = $null
+            LastProcessedLength       = $null
+            LastProcessedAtUtc        = $null
+        }
+        Txt = [PSCustomObject]@{
+            LastProcessedWriteTimeUtc = $null
+            LastProcessedLength       = $null
+            LastProcessedAtUtc        = $null
+        }
+    }
+}
+
+function Get-State {
+    if (-not (Test-Path $statePath)) {
+        return New-EmptyState
+    }
+
+    try {
+        $state = Get-Content -Path $statePath -Raw | ConvertFrom-Json
+
+        if ($null -eq $state.Xls) {
+            $state | Add-Member -NotePropertyName Xls -NotePropertyValue (New-EmptyState).Xls
+        }
+        if ($null -eq $state.Txt) {
+            $state | Add-Member -NotePropertyName Txt -NotePropertyValue (New-EmptyState).Txt
+        }
+
+        return $state
+    }
+    catch {
+        Write-Log "ADVARSEL: Kunne ikke lese state.json. Starter med tom state. Feil: $(Get-ErrorText $_)"
+        return New-EmptyState
+    }
+}
+
+function Save-State {
+    param([Parameter(Mandatory)]$State)
+
+    $tmp = "$statePath.tmp"
+    $State | ConvertTo-Json -Depth 10 | Set-Content -Path $tmp -Encoding UTF8
+    Move-Item -Path $tmp -Destination $statePath -Force
+}
+
+# =====================================================================
+# FILKONTROLL
+# =====================================================================
+
+function Test-FileStable {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [int]$Seconds = 5
+    )
+
+    if (-not (Test-Path $Path)) {
+        return [PSCustomObject]@{
+            Exists           = $false
+            Stable           = $false
+            LastWriteTimeUtc = $null
+            Length           = $null
+        }
+    }
+
+    $before = Get-Item $Path
+    Start-Sleep -Seconds $Seconds
+
+    if (-not (Test-Path $Path)) {
+        return [PSCustomObject]@{
+            Exists           = $false
+            Stable           = $false
+            LastWriteTimeUtc = $null
+            Length           = $null
+        }
+    }
+
+    $after = Get-Item $Path
+
+    return [PSCustomObject]@{
+        Exists           = $true
+        Stable           = ($before.Length -eq $after.Length -and $before.LastWriteTimeUtc -eq $after.LastWriteTimeUtc)
+        LastWriteTimeUtc = $after.LastWriteTimeUtc
+        Length           = $after.Length
+    }
+}
+
+function Test-FileChanged {
+    param(
+        [Parameter(Mandatory)]$FileInfo,
+        [Parameter(Mandatory)]$StateEntry
+    )
+
+    if ([string]::IsNullOrWhiteSpace([string]$StateEntry.LastProcessedWriteTimeUtc)) {
+        return $true
+    }
+
+    try {
+        $lastProcessedTime = [DateTime]::Parse($StateEntry.LastProcessedWriteTimeUtc).ToUniversalTime()
+    }
+    catch {
+        return $true
+    }
+
+    $sameTime = ($FileInfo.LastWriteTimeUtc -eq $lastProcessedTime)
+    $sameLength = ([Int64]$FileInfo.Length -eq [Int64]$StateEntry.LastProcessedLength)
+
+    return -not ($sameTime -and $sameLength)
+}
+
+# =====================================================================
+# JOB-ID KONVERTERING
 # =====================================================================
 
 function Convert-ToJobId {
-
     param(
-        [Parameter(Mandatory)]
-        [string]$Pfield1No,
-
+        [Parameter(Mandatory)] [string]$Pfield1No,
         [switch]$RemoveDash
     )
 
@@ -95,55 +285,32 @@ function Convert-ToJobId {
 
     $value = $Pfield1No.Trim().ToUpper()
 
-
-    # XLS:
-    # 8-00102-99-100
-    # ->
-    # 80010299100
-
     if ($RemoveDash) {
         $value = $value -replace "-", ""
     }
 
-
-    # Spesialregel:
-    #
-    # LA0122P50113
-    # ->
-    # 4270122450113
-
+    # LA0122P50113 -> 4270122450113
     if ($value.StartsWith("LA")) {
         $value = "427" + $value.Substring(2)
     }
 
-
     $result = New-Object System.Text.StringBuilder
 
-
     foreach ($char in $value.ToCharArray()) {
-
         $c = $char.ToString()
 
-
         if ($c -match '^\d$') {
-
             [void]$result.Append($c)
-
         }
         elseif ($map.ContainsKey($c)) {
-
             [void]$result.Append($map[$c])
-
         }
         else {
-
             throw "Ukjent tegn '$c' i ID '$Pfield1No'."
         }
     }
 
-
     $numericValue = $result.ToString()
-
 
     try {
         return [Int64]$numericValue
@@ -153,461 +320,623 @@ function Convert-ToJobId {
     }
 }
 
-
 # =====================================================================
-# SEND JOB TIL API
+# EXCELDATAREADER
 # =====================================================================
 
-function Send-Job {
+function Initialize-ExcelDataReader {
+    $excelDataReaderDll = Join-Path $basePath "lib\ExcelDataReader.dll"
+    $valueTupleDll      = Join-Path $basePath "lib\System.ValueTuple.dll"
 
-    param(
-        [Parameter(Mandatory)]
-        [Int64]$JobId,
-
-        [Parameter(Mandatory)]
-        [string]$PfieldId,
-
-        [Parameter(Mandatory)]
-        [string]$Name
-    )
-
-
-    $bodyObject = @{
-        id          = $JobId
-        name        = $Name
-        pfield1Id   = $PfieldId
-        pfield1Name = $Name
-        pfield2Id   = 1198
-        disabled    = $false
+    if (-not (Test-Path $excelDataReaderDll)) {
+        throw "Finner ikke ExcelDataReader.dll: $excelDataReaderDll"
     }
 
-
-    $json = $bodyObject | ConvertTo-Json -Compress
-
-    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-
-    $headers = Get-ApiHeaders
-
-
-    Write-Host ""
-    Write-Host "============================================================"
-    Write-Host "API PUT"
-    Write-Host "============================================================"
-    Write-Host "URL:       $ApiUrl"
-    Write-Host "Job ID:    $JobId"
-    Write-Host "Pfield1Id: $PfieldId"
-    Write-Host "Pfield2Id: 1198"
-    Write-Host "Name:      $Name"
-    Write-Host ""
-    Write-Host "JSON:"
-    Write-Host $json
-    Write-Host ""
-
-
-    try {
-
-        $response = Invoke-RestMethod `
-            -Uri $ApiUrl `
-            -Method Put `
-            -Headers $headers `
-            -ContentType "application/json; charset=utf-8" `
-            -Body $bodyBytes `
-            -ErrorAction Stop
-
-
-        Write-Host "RESULTAT: API OK"
-
-
-        if ($null -ne $response) {
-
-            Write-Host ""
-            Write-Host "API RESPONSE:"
-
-            try {
-                $response | ConvertTo-Json -Depth 10
-            }
-            catch {
-                Write-Host $response
-            }
-        }
-
-
-        return $response
+    if (-not (Test-Path $valueTupleDll)) {
+        throw "Finner ikke System.ValueTuple.dll: $valueTupleDll"
     }
-    catch {
 
-        Write-Host ""
-        Write-Host "============================================================"
-        Write-Host "API FEIL"
-        Write-Host "============================================================"
-
-        Write-Host "Job ID:    $JobId"
-        Write-Host "Pfield1Id: $PfieldId"
-        Write-Host "Pfield2Id: 1198"
-        Write-Host "Name:      $Name"
-
-        Write-Host ""
-        Write-Host "JSON:"
-        Write-Host $json
-
-        Write-Host ""
-        Write-Host "Exception:"
-        Write-Host $_.Exception.Message
-
-
-        if ($_.ErrorDetails.Message) {
-
-            Write-Host ""
-            Write-Host "ErrorDetails:"
-            Write-Host $_.ErrorDetails.Message
-        }
-
-
-        if ($_.Exception.Response) {
-
-            try {
-
-                $httpResponse = $_.Exception.Response
-
-                Write-Host ""
-                Write-Host "HTTP Status:"
-
-                try {
-
-                    Write-Host ([int]$httpResponse.StatusCode)
-                    Write-Host $httpResponse.StatusDescription
-
-                }
-                catch {
-
-                    Write-Host "Kunne ikke lese HTTP status."
-                }
-
-
-                Write-Host ""
-                Write-Host "Response body:"
-
-
-                $responseStream = $httpResponse.GetResponseStream()
-
-
-                if ($responseStream) {
-
-                    $streamReader = New-Object `
-                        System.IO.StreamReader($responseStream)
-
-
-                    try {
-
-                        $responseBody = $streamReader.ReadToEnd()
-
-
-                        if ([string]::IsNullOrWhiteSpace($responseBody)) {
-
-                            Write-Host "<tom response body>"
-
-                        }
-                        else {
-
-                            Write-Host $responseBody
-                        }
-
-                    }
-                    finally {
-
-                        $streamReader.Close()
-                        $streamReader.Dispose()
-                    }
-
-                }
-                else {
-
-                    Write-Host "<ingen response stream>"
-                }
-
-            }
-            catch {
-
-                Write-Host ""
-                Write-Host "Kunne ikke lese HTTP response:"
-                Write-Host $_.Exception.Message
-            }
-        }
-
-
-        Write-Host ""
-        Write-Host "Base exception:"
-        Write-Host $_.Exception.GetBaseException().Message
-
-        Write-Host "============================================================"
-
-
-        throw
+    if (-not ("ExcelDataReader.ExcelReaderFactory" -as [type])) {
+        Add-Type -Path $valueTupleDll
+        Add-Type -Path $excelDataReaderDll
     }
 }
 
+# =====================================================================
+# SQL IMPORT - VALGFRI
+# =====================================================================
+
+function Invoke-SqlImport {
+    param(
+        [Parameter(Mandatory)] [bool]$ReplaceXls,
+        [Parameter(Mandatory)] [bool]$ReplaceTxt,
+        [Parameter(Mandatory)] [object[]]$Jobs
+    )
+
+    if (-not $runSqlImport) {
+        Write-Log "SQL-import er deaktivert (Settings.RunSqlImport=false)."
+        return
+    }
+
+    if (-not $ReplaceXls -and -not $ReplaceTxt) {
+        Write-Log "SQL-import: Ingen kilder er behandlet. Hopper over."
+        return
+    }
+
+    if ($null -eq $config.Database) {
+        throw "Database-seksjonen mangler i config.json."
+    }
+
+    $sqlServer   = [string]$config.Database.Server
+    $sqlDatabase = [string]$config.Database.Database
+    $sqlTable    = [string]$config.Database.Table
+
+    if ([string]::IsNullOrWhiteSpace($sqlTable)) {
+        $sqlTable = "JobImport"
+    }
+
+    $integratedSecurity = $true
+    if ($null -ne $config.Database.IntegratedSecurity) {
+        $integratedSecurity = [bool]$config.Database.IntegratedSecurity
+    }
+
+    if ($integratedSecurity) {
+        $connectionString = "Server=$sqlServer;Database=$sqlDatabase;Integrated Security=True;TrustServerCertificate=True;"
+    }
+    else {
+        $sqlUser = [string]$config.Database.Username
+        $sqlPassword = [string]$config.Database.Password
+        $connectionString = "Server=$sqlServer;Database=$sqlDatabase;User ID=$sqlUser;Password=$sqlPassword;TrustServerCertificate=True;"
+    }
+
+    $connection = New-Object System.Data.SqlClient.SqlConnection($connectionString)
+    $transaction = $null
+
+    try {
+        Write-Host ""
+        Write-Host "Starter SQL-import..."
+        Write-Host "Server:   $sqlServer"
+        Write-Host "Database: $sqlDatabase"
+        Write-Host "Table:    $sqlTable"
+
+        $connection.Open()
+        $transaction = $connection.BeginTransaction()
+
+        $command = $connection.CreateCommand()
+        $command.Transaction = $transaction
+        $command.CommandText = @"
+IF OBJECT_ID(N'dbo.[$sqlTable]', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.[$sqlTable]
+    (
+        Id          BIGINT        NOT NULL,
+        Name        NVARCHAR(500) NULL,
+        Pfield1Id   NVARCHAR(100) NULL,
+        Pfield1Name NVARCHAR(500) NULL,
+        Disabled    BIT           NOT NULL,
+        Source      NVARCHAR(20)  NULL
+    );
+END
+"@
+        [void]$command.ExecuteNonQuery()
+
+        if ($ReplaceXls) {
+            $command.CommandText = "DELETE FROM dbo.[$sqlTable] WHERE Source = 'XLS';"
+            [void]$command.ExecuteNonQuery()
+            Write-Log "SQL: Slettet eksisterende Source='XLS'."
+        }
+
+        if ($ReplaceTxt) {
+            $command.CommandText = "DELETE FROM dbo.[$sqlTable] WHERE Source = 'TXT';"
+            [void]$command.ExecuteNonQuery()
+            Write-Log "SQL: Slettet eksisterende Source='TXT'."
+        }
+
+        $rowsForSql = @($Jobs | Where-Object {
+            ($ReplaceXls -and $_.Source -eq 'XLS') -or
+            ($ReplaceTxt -and $_.Source -eq 'TXT')
+        })
+
+        if ($rowsForSql.Count -gt 0) {
+            $dataTable = New-Object System.Data.DataTable
+            [void]$dataTable.Columns.Add("Id", [Int64])
+            [void]$dataTable.Columns.Add("Name", [string])
+            [void]$dataTable.Columns.Add("Pfield1Id", [string])
+            [void]$dataTable.Columns.Add("Pfield1Name", [string])
+            [void]$dataTable.Columns.Add("Disabled", [bool])
+            [void]$dataTable.Columns.Add("Source", [string])
+
+            foreach ($job in $rowsForSql) {
+                $row = $dataTable.NewRow()
+                $row["Id"]          = [Int64]$job.Id
+                $row["Name"]        = [string]$job.Name
+                $row["Pfield1Id"]   = [string]$job.Pfield1Id
+                $row["Pfield1Name"] = [string]$job.Pfield1Name
+                $row["Disabled"]    = [bool]$job.Disabled
+                $row["Source"]      = [string]$job.Source
+                [void]$dataTable.Rows.Add($row)
+            }
+
+            $bulkCopy = New-Object System.Data.SqlClient.SqlBulkCopy($connection, [System.Data.SqlClient.SqlBulkCopyOptions]::Default, $transaction)
+            try {
+                $bulkCopy.DestinationTableName = "dbo.[$sqlTable]"
+                $bulkCopy.BatchSize = 1000
+                $bulkCopy.BulkCopyTimeout = 0
+
+                foreach ($column in @("Id", "Name", "Pfield1Id", "Pfield1Name", "Disabled", "Source")) {
+                    [void]$bulkCopy.ColumnMappings.Add($column, $column)
+                }
+
+                $bulkCopy.WriteToServer($dataTable)
+            }
+            finally {
+                $bulkCopy.Close()
+                $bulkCopy.Dispose()
+            }
+        }
+
+        $transaction.Commit()
+        Write-Host "SQL-import ferdig."
+        Write-Log "SQL-import OK. Importerte $($rowsForSql.Count) rader. ReplaceXls=$ReplaceXls ReplaceTxt=$ReplaceTxt"
+    }
+    catch {
+        if ($transaction) {
+            try { $transaction.Rollback() } catch {}
+        }
+
+        $message = Get-ErrorText $_
+        Write-Host ""
+        Write-Host "ADVARSEL: SQL-import feilet. Hovedjobben fortsetter."
+        Write-Host $message
+        Write-Log "ADVARSEL: SQL-import feilet: $message"
+        # IKKE throw - SQL er ikke fatal for hovedjobben
+    }
+    finally {
+        if ($connection.State -ne [System.Data.ConnectionState]::Closed) {
+            $connection.Close()
+        }
+        $connection.Dispose()
+    }
+}
 
 # =====================================================================
 # START
 # =====================================================================
 
-Write-Host ""
-Write-Host "============================================================"
-Write-Host "XLS -> API TEST"
-Write-Host "============================================================"
-Write-Host "XLS: $XlsPath"
-Write-Host "API: $ApiUrl"
-Write-Host "============================================================"
+$state = Get-State
+$csvJobs = @()
 
+$xlsChanged = $false
+$txtChanged = $false
+$xlsProcessingCompleted = $false
+$txtProcessingCompleted = $false
 
-$successCount       = 0
-$apiErrorCount      = 0
-$conversionError    = 0
-$skippedStatus      = 0
-$skippedClosed      = 0
-$emptyIdCount       = 0
-$rowNumber          = 0
-
-
-# =====================================================================
-# KOPIER XLS TIL TEMP
-# =====================================================================
-
-$tempPath = Join-Path `
-    $env:TEMP `
-    ("xls_api_test_{0}.xls" -f [Guid]::NewGuid().ToString("N"))
-
-
-Copy-Item `
-    -Path $XlsPath `
-    -Destination $tempPath `
-    -Force
-
+$mainStartTime = Get-Date
+$mainStartUtc  = [DateTime]::UtcNow
 
 Write-Host ""
-Write-Host "Temp-fil:"
-Write-Host $tempPath
+Write-Host "======================================================================"
+Write-Host "STARTER JOB IMPORT"
+Write-Host "======================================================================"
+Write-Host "XLS: $excelPath"
+Write-Host "TXT: $txtPath"
+Write-Host "API: $jobApiUrl"
+Write-Host "Pfield2Id: $pfield2Id"
+Write-Host "SQL aktivert: $runSqlImport"
+Write-Host "======================================================================"
 
+Write-Log ""
+Write-Log "======================================================================"
+Write-Log "START JOB IMPORT"
+Write-Log "Start lokal tid: $mainStartTime"
+Write-Log "Start UTC: $($mainStartUtc.ToString('o'))"
+Write-Log "XLS: $excelPath"
+Write-Log "TXT: $txtPath"
+Write-Log "CSV: $csvPath"
+Write-Log "JOB URL: $jobApiUrl"
+Write-Log "Pfield2Id: $pfield2Id"
+Write-Log "SQL aktivert: $runSqlImport"
+Write-Log "======================================================================"
 
-$stream = $null
-$reader = $null
+# #####################################################################
+# XLS
+# #####################################################################
 
+Write-Host ""
+Write-Host "Kontrollerer XLS..."
 
-try {
+$xlsFileInfo = Test-FileStable -Path $excelPath -Seconds $fileStabilitySeconds
 
-    # =================================================================
-    # ÅPNE XLS
-    # =================================================================
+if (-not $xlsFileInfo.Exists) {
+    Write-Host "XLS finnes ikke."
+    Write-Log "XLS finnes ikke: $excelPath"
+}
+elseif (-not $xlsFileInfo.Stable) {
+    Write-Host "XLS er fortsatt under endring. Hopper over."
+    Write-Log "XLS er fortsatt under endring. Hopper over."
+}
+else {
+    $xlsChanged = Test-FileChanged -FileInfo $xlsFileInfo -StateEntry $state.Xls
 
-    $stream = [System.IO.File]::Open(
-        $tempPath,
-        [System.IO.FileMode]::Open,
-        [System.IO.FileAccess]::Read,
-        [System.IO.FileShare]::ReadWrite
-    )
+    if (-not $xlsChanged) {
+        Write-Host "XLS er ikke endret siden siste behandling. Hopper over."
+        Write-Log "XLS: Uendret - hoppet over."
+    }
+    else {
+        Write-Host "XLS er endret. Starter behandling."
+        Write-Log "XLS: Ny/endret fil - starter behandling."
 
+        $xlsJobSuccess = 0
+        $xlsJobFailed = 0
+        $xlsJobConversionFailed = 0
+        $xlsSkippedCLSD = 0
+        $xlsSkippedStatus = 0
+        $xlsEmptyId = 0
+        $xlsJobFailedRows = @()
 
-    $reader = [ExcelDataReader.ExcelReaderFactory]::CreateBinaryReader(
-        $stream
-    )
+        $tempPath = Join-Path $env:TEMP ("job_import_{0}.xls" -f [Guid]::NewGuid().ToString("N"))
+        $stream = $null
+        $reader = $null
 
+        try {
+            Initialize-ExcelDataReader
+            Copy-Item -Path $excelPath -Destination $tempPath -Force
 
-    Write-Host ""
-    Write-Host "XLS åpnet."
-    Write-Host "Leser første worksheet..."
-    Write-Host ""
+            $stream = [System.IO.File]::Open(
+                $tempPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite
+            )
 
+            $reader = [ExcelDataReader.ExcelReaderFactory]::CreateBinaryReader($stream)
 
-    # =================================================================
-    # LES FØRSTE WORKSHEET
-    # =================================================================
+            $rowNumber = 0
 
-    while ($reader.Read()) {
+            while ($reader.Read()) {
+                $rowNumber++
 
-        $rowNumber++
+                # ExcelDataReader er 0-basert: C=2, D=3, E=4, N=13
+                $valueC = $reader.GetValue(2)
+                $valueD = $reader.GetValue(3)
+                $valueE = $reader.GetValue(4)
+                $valueN = $reader.GetValue(13)
 
+                $id          = ([string]$valueC).Trim()
+                $description = ([string]$valueD).Trim()
+                $status      = ([string]$valueE).Trim()
+                $closed      = ([string]$valueN).Trim()
 
-        # ExcelDataReader bruker 0-basert indeks
-        #
-        # C = 2
-        # D = 3
-        # E = 4
-        # N = 13
+                # FILTER: E skal vÃ¦re 3 eller 4
+                if ($status -ne "3" -and $status -ne "4") {
+                    $xlsSkippedStatus++
+                    continue
+                }
 
-        $valueC = $reader.GetValue(2)
-        $valueD = $reader.GetValue(3)
-        $valueE = $reader.GetValue(4)
-        $valueN = $reader.GetValue(13)
+                # FILTER: N skal ikke inneholde CLSD
+                if ($closed -match "CLSD") {
+                    $xlsSkippedCLSD++
+                    continue
+                }
 
+                if ([string]::IsNullOrWhiteSpace($id)) {
+                    $xlsEmptyId++
+                    continue
+                }
 
-        $id          = [string]$valueC
-        $description = [string]$valueD
-        $status      = [string]$valueE
-        $closed      = [string]$valueN
+                $name = (($id, $description) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join " "
 
+                try {
+                    $jobId = Convert-ToJobId -Pfield1No $id -RemoveDash
+                }
+                catch {
+                    $xlsJobConversionFailed++
+                    $xlsJobFailedRows += [PSCustomObject]@{
+                        Row   = $rowNumber
+                        Id    = $id
+                        JobId = ""
+                        Name  = $name
+                        Error = Get-ErrorText $_
+                    }
+                    continue
+                }
 
-        # =================================================================
-        # FILTER 1
-        # Kolonne E må være 3 eller 4
-        # =================================================================
+                # Legges i CSV/SQL-datasettet nÃ¥r ID er gyldig.
+                $csvJobs += [PSCustomObject]@{
+                    Id          = $jobId
+                    Name        = $name
+                    Pfield1Id   = $id
+                    Pfield1Name = $name
+                    Disabled    = $false
+                    Source      = "XLS"
+                }
 
-        if (
-            $status.Trim() -ne "3" -and
-            $status.Trim() -ne "4"
-        ) {
-
-            $skippedStatus++
-
-            continue
-        }
-
-
-        # =================================================================
-        # FILTER 2
-        # Kolonne N må IKKE inneholde CLSD
-        # =================================================================
-
-        if ($closed -match "CLSD") {
-
-            $skippedClosed++
-
-            continue
-        }
-
-
-        # =================================================================
-        # FILTER 3
-        # ID må finnes
-        # =================================================================
-
-        if ([string]::IsNullOrWhiteSpace($id)) {
-
-            $emptyIdCount++
-
-            continue
-        }
-
-
-        # =================================================================
-        # NAME = C + D
-        # =================================================================
-
-        $name = (
-            ($id, $description) |
-            Where-Object {
-                -not [string]::IsNullOrWhiteSpace($_)
+                try {
+                    $null = Send-Job -JobId $jobId -PfieldId $id -Name $name
+                    $xlsJobSuccess++
+                }
+                catch {
+                    $xlsJobFailed++
+                    $xlsJobFailedRows += [PSCustomObject]@{
+                        Row   = $rowNumber
+                        Id    = $id
+                        JobId = $jobId
+                        Name  = $name
+                        Error = Get-ErrorText $_
+                    }
+                }
             }
-        ) -join " "
 
-
-        Write-Host ""
-        Write-Host "------------------------------------------------------------"
-        Write-Host "Excel rad: $rowNumber"
-        Write-Host "ID:        $id"
-        Write-Host "Status E:  $status"
-        Write-Host "Kolonne N: $closed"
-        Write-Host "Name:      $name"
-
-
-        # =================================================================
-        # KONVERTER JOB ID
-        # =================================================================
-
-        try {
-
-            $jobId = Convert-ToJobId `
-                -Pfield1No $id `
-                -RemoveDash
-
-
-            Write-Host "Job ID:    $jobId"
-
+            $xlsProcessingCompleted = $true
         }
         catch {
-
-            $conversionError++
-
-            Write-Host ""
-            Write-Host "KONVERTERINGSFEIL"
-            Write-Host "Excel rad: $rowNumber"
-            Write-Host "ID:        $id"
-            Write-Host "Feil:      $($_.Exception.Message)"
-
-            continue
+            $message = Get-ErrorText $_
+            Write-Host "XLS-behandling feilet: $message"
+            Write-Log "KRITISK XLS-FEIL: $message"
+        }
+        finally {
+            if ($reader) { try { $reader.Dispose() } catch {} }
+            if ($stream) { try { $stream.Dispose() } catch {} }
+            Remove-Item -Path $tempPath -Force -ErrorAction SilentlyContinue
         }
 
+        Write-Log "RESULTAT XLS -> JOB"
+        Write-Log "Success: $xlsJobSuccess"
+        Write-Log "API-feil: $xlsJobFailed"
+        Write-Log "Job ID konverteringsfeil: $xlsJobConversionFailed"
+        Write-Log "Hoppet over status != 3/4: $xlsSkippedStatus"
+        Write-Log "CLSD hoppet over: $xlsSkippedCLSD"
+        Write-Log "Tom ID hoppet over: $xlsEmptyId"
 
-        # =================================================================
-        # SEND TIL API
-        # =================================================================
+        foreach ($failedRow in $xlsJobFailedRows) {
+            Write-Log "XLS FEIL rad=$($failedRow.Row) Id=$($failedRow.Id) JobId=$($failedRow.JobId) Feil=$($failedRow.Error)"
+        }
+
+        if ($xlsProcessingCompleted) {
+            $state.Xls.LastProcessedWriteTimeUtc = $xlsFileInfo.LastWriteTimeUtc.ToString("o")
+            $state.Xls.LastProcessedLength = [Int64]$xlsFileInfo.Length
+            $state.Xls.LastProcessedAtUtc = [DateTime]::UtcNow.ToString("o")
+            Save-State -State $state
+            Write-Log "XLS state oppdatert."
+        }
+        else {
+            Write-Log "XLS state IKKE oppdatert. Filen prÃ¸ves igjen neste kjÃ¸ring."
+        }
+    }
+}
+
+# #####################################################################
+# TXT
+# #####################################################################
+
+Write-Host ""
+Write-Host "Kontrollerer TXT..."
+
+$txtFileInfo = Test-FileStable -Path $txtPath -Seconds $fileStabilitySeconds
+
+if (-not $txtFileInfo.Exists) {
+    Write-Host "TXT finnes ikke."
+    Write-Log "TXT finnes ikke: $txtPath"
+}
+elseif (-not $txtFileInfo.Stable) {
+    Write-Host "TXT er fortsatt under endring. Hopper over."
+    Write-Log "TXT er fortsatt under endring. Hopper over."
+}
+else {
+    $txtChanged = Test-FileChanged -FileInfo $txtFileInfo -StateEntry $state.Txt
+
+    if (-not $txtChanged) {
+        Write-Host "TXT er ikke endret siden siste behandling. Hopper over."
+        Write-Log "TXT: Uendret - hoppet over."
+    }
+    else {
+        Write-Host "TXT er endret. Starter behandling."
+        Write-Log "TXT: Ny/endret fil - starter behandling."
+
+        $txtSkippedNumeric = 0
+        $txtSkippedOther = 0
+        $txtSkippedHeaders = 0
+        $txtJobSuccess = 0
+        $txtJobFailed = 0
+        $txtJobConversionFailed = 0
+        $txtJobFailedRows = @()
 
         try {
+            $lines = Get-Content -Path $txtPath
 
-            $null = Send-Job `
-                -JobId $jobId `
-                -PfieldId $id `
-                -Name $name
+            $headerIndex = -1
+            $orderIndex = -1
+            $descriptionIndex = -1
 
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $columns = $lines[$i] -split "`t", -1
+                $trimmed = @($columns | ForEach-Object { ([string]$_).Trim() })
 
-            $successCount++
+                $o = [Array]::IndexOf($trimmed, "Order")
+                $d = [Array]::IndexOf($trimmed, "Description")
 
+                if ($o -ge 0 -and $d -ge 0) {
+                    $headerIndex = $i
+                    $orderIndex = $o
+                    $descriptionIndex = $d
+                    break
+                }
+            }
+
+            if ($headerIndex -lt 0) {
+                throw "Fant ikke TXT-header med bÃ¥de 'Order' og 'Description'."
+            }
+
+            for ($i = $headerIndex + 1; $i -lt $lines.Count; $i++) {
+                $columns = $lines[$i] -split "`t", -1
+
+                if ($columns.Count -le [Math]::Max($orderIndex, $descriptionIndex)) {
+                    $txtSkippedOther++
+                    continue
+                }
+
+                $order = ([string]$columns[$orderIndex]).Trim()
+                $description = ([string]$columns[$descriptionIndex]).Trim()
+
+                if ($order -eq "Order" -and $description -eq "Description") {
+                    $txtSkippedHeaders++
+                    continue
+                }
+
+                if ([string]::IsNullOrWhiteSpace($order)) {
+                    $txtSkippedOther++
+                    continue
+                }
+
+                # KUN TXT: hopper over hvis Order starter med tall
+                if ($order -match '^[0-9]') {
+                    $txtSkippedNumeric++
+                    continue
+                }
+
+                # MÃ¥ starte med bokstav
+                if ($order -notmatch '^[A-Za-z]') {
+                    $txtSkippedOther++
+                    continue
+                }
+
+                $name = (($order, $description) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join " "
+
+                try {
+                    $jobId = Convert-ToJobId -Pfield1No $order
+                }
+                catch {
+                    $txtJobConversionFailed++
+                    $txtJobFailedRows += [PSCustomObject]@{
+                        Row   = $i + 1
+                        Id    = $order
+                        JobId = ""
+                        Name  = $name
+                        Error = Get-ErrorText $_
+                    }
+                    continue
+                }
+
+                $csvJobs += [PSCustomObject]@{
+                    Id          = $jobId
+                    Name        = $name
+                    Pfield1Id   = $order
+                    Pfield1Name = $name
+                    Disabled    = $false
+                    Source      = "TXT"
+                }
+
+                try {
+                    $null = Send-Job -JobId $jobId -PfieldId $order -Name $name
+                    $txtJobSuccess++
+                }
+                catch {
+                    $txtJobFailed++
+                    $txtJobFailedRows += [PSCustomObject]@{
+                        Row   = $i + 1
+                        Id    = $order
+                        JobId = $jobId
+                        Name  = $name
+                        Error = Get-ErrorText $_
+                    }
+                }
+            }
+
+            $txtProcessingCompleted = $true
         }
         catch {
+            $message = Get-ErrorText $_
+            Write-Host "TXT-behandling feilet: $message"
+            Write-Log "KRITISK TXT-FEIL: $message"
+        }
 
-            $apiErrorCount++
+        Write-Log "RESULTAT TXT -> JOB"
+        Write-Log "Success: $txtJobSuccess"
+        Write-Log "API-feil: $txtJobFailed"
+        Write-Log "Job ID konverteringsfeil: $txtJobConversionFailed"
+        Write-Log "Hoppet over - starter med tall: $txtSkippedNumeric"
+        Write-Log "Hoppet over - gjentatte headere: $txtSkippedHeaders"
+        Write-Log "Hoppet over - annet: $txtSkippedOther"
 
-            Write-Host ""
-            Write-Host "API-kallet feilet for Excel rad $rowNumber."
-            Write-Host "Fortsetter med neste rad."
+        foreach ($failedRow in $txtJobFailedRows) {
+            Write-Log "TXT FEIL rad=$($failedRow.Row) Id=$($failedRow.Id) JobId=$($failedRow.JobId) Feil=$($failedRow.Error)"
+        }
 
-            continue
+        if ($txtProcessingCompleted) {
+            $state.Txt.LastProcessedWriteTimeUtc = $txtFileInfo.LastWriteTimeUtc.ToString("o")
+            $state.Txt.LastProcessedLength = [Int64]$txtFileInfo.Length
+            $state.Txt.LastProcessedAtUtc = [DateTime]::UtcNow.ToString("o")
+            Save-State -State $state
+            Write-Log "TXT state oppdatert."
+        }
+        else {
+            Write-Log "TXT state IKKE oppdatert. Filen prÃ¸ves igjen neste kjÃ¸ring."
         }
     }
-
-}
-finally {
-
-    if ($reader) {
-
-        try {
-            $reader.Dispose()
-        }
-        catch {}
-    }
-
-
-    if ($stream) {
-
-        try {
-            $stream.Dispose()
-        }
-        catch {}
-    }
-
-
-    Remove-Item `
-        -Path $tempPath `
-        -Force `
-        -ErrorAction SilentlyContinue
 }
 
+# =====================================================================
+# CSV EKSPORT
+# =====================================================================
+
+$csvJobsFinal = @($csvJobs | Sort-Object Id, Source -Unique)
+
+if ($csvJobsFinal.Count -gt 0) {
+    $csvJobsFinal | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+    Write-Host ""
+    Write-Host "CSV skrevet: $csvPath"
+    Write-Host "Antall rader: $($csvJobsFinal.Count)"
+    Write-Log "CSV skrevet: $csvPath. Antall rader: $($csvJobsFinal.Count)"
+}
+else {
+    Write-Host ""
+    Write-Host "Ingen nye/endret data Ã¥ eksportere til CSV."
+    Write-Log "CSV EKSPORT: Ingen nye/endret data Ã¥ eksportere."
+}
 
 # =====================================================================
-# RESULTAT
+# SQL IMPORT - HELT TIL SLUTT, VALGFRI OG IKKE-FATAL
 # =====================================================================
 
+$replaceXls = ($xlsChanged -and $xlsProcessingCompleted)
+$replaceTxt = ($txtChanged -and $txtProcessingCompleted)
+
+Invoke-SqlImport `
+    -ReplaceXls $replaceXls `
+    -ReplaceTxt $replaceTxt `
+    -Jobs $csvJobsFinal
+
+# =====================================================================
+# FERDIG
+# =====================================================================
+
+$mainEndTime = Get-Date
+$mainEndUtc = [DateTime]::UtcNow
+
 Write-Host ""
-Write-Host ""
-Write-Host "============================================================"
-Write-Host "FERDIG"
-Write-Host "============================================================"
-Write-Host "API OK:                    $successCount"
-Write-Host "API feil:                  $apiErrorCount"
-Write-Host "Job ID konverteringsfeil:  $conversionError"
-Write-Host "Hoppet over status != 3/4: $skippedStatus"
-Write-Host "Hoppet over CLSD:          $skippedClosed"
-Write-Host "Hoppet over tom ID:        $emptyIdCount"
-Write-Host "============================================================"
+Write-Host "======================================================================"
+Write-Host "IMPORT FERDIG"
+Write-Host "======================================================================"
+Write-Host "Start: $mainStartTime"
+Write-Host "Slutt: $mainEndTime"
+Write-Host "XLS behandlet: $xlsProcessingCompleted"
+Write-Host "TXT behandlet: $txtProcessingCompleted"
+Write-Host "CSV-rader: $($csvJobsFinal.Count)"
+Write-Host "SQL aktivert: $runSqlImport"
+Write-Host "======================================================================"
+
+Write-Log "======================================================================"
+Write-Log "IMPORT FERDIG"
+Write-Log "Start lokal tid: $mainStartTime"
+Write-Log "Slutt lokal tid: $mainEndTime"
+Write-Log "Start UTC: $($mainStartUtc.ToString('o'))"
+Write-Log "Slutt UTC: $($mainEndUtc.ToString('o'))"
+Write-Log "XLS behandlet: $xlsProcessingCompleted"
+Write-Log "TXT behandlet: $txtProcessingCompleted"
+Write-Log "CSV-rader: $($csvJobsFinal.Count)"
+Write-Log "SQL aktivert: $runSqlImport"
+Write-Log "======================================================================"
+
 </textarea><div id="status" role="status" aria-live="polite"></div><small>Kopieringen bruker nettleserens utklippstavle. Hvis knappen ikke virker, bruk «Marker alt» og Ctrl+C.</small>
 </main><script>
 const field=document.getElementById('script');const status=document.getElementById('status');
